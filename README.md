@@ -73,9 +73,9 @@ Download the latest version of Pose Nudge for your operating system.
 
 | Operating System | File Format | Download Link |
 | :---: | :---: | :---: |
-| 💻 **Windows** | `.exe` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 💻 **Windows (To be modified)** | `.exe` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
 | 🍏 **macOS** | `.dmg` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
-| 🐧 **Linux** | `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 🐧 **Linux (To be modified)** | `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
 
 ---
 
