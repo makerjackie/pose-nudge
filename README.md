@@ -26,6 +26,7 @@
 <p align="center">
   <a href="./README.md"><img alt="Language-English" src="https://img.shields.io/badge/Language-English-blue?style=for-the-badge"></a>
   <a href="./README.ko.md"><img alt="Language-Korean" src="https://img.shields.io/badge/언어-한국어-blue?style=for-the-badge"></a>
+  <a href="./README.tr.md"><img alt="Dil-Türkçe" src="https://img.shields.io/badge/Dil-Türkçe-blue?style=for-the-badge"></a>
   
 </p>
 
@@ -158,6 +159,7 @@ Thanks to these wonderful people who have made this project better! ([emoji key]
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/DDULDDUCK"><img src="https://avatars.githubusercontent.com/u/126528992?v=4?s=100" width="100px;" alt="Jaeseok Song"/><br /><sub><b>Jaeseok Song</b></sub></a><br /><a href="https://github.com/DDULDDUCK/pose-nudge/commits?author=DDULDDUCK" title="Code">💻</a> <a href="#maintenance-DDULDDUCK" title="Maintenance">🚧</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://adamdangoor.com"><img src="https://avatars.githubusercontent.com/u/797801?v=4?s=100" width="100px;" alt="Adam Dangoor"/><br /><sub><b>Adam Dangoor</b></sub></a><br /><a href="https://github.com/DDULDDUCK/pose-nudge/issues?q=author%3Aadamtheturtle" title="Bug reports">🐛</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/Yodoma"><img src="https://avatars.githubusercontent.com/u/163729809?v=4?s=100" width="100px;" alt="Yodoma"/><br /><sub><b>Yodoma</b></sub></a><br /><a href="https://github.com/DDULDDUCK/pose-nudge/issues?q=author%3AYodoma" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://yusufyorunc.com.tr"><img src="https://avatars.githubusercontent.com/u/39492561?v=4?s=100" width="100px;" alt="Yusuf Yorunç"/><br /><sub><b>Yusuf Yorunç</b></sub></a><br /><a href="#translation-yusufyorunc" title="Translation">🌍</a></td>
     </tr>
   </tbody>
   <tfoot>

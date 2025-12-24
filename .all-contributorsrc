@@ -46,6 +46,15 @@
       "contributions": [
         "bug"
       ]
+    },
+    {
+      "login": "yusufyorunc",
+      "name": "Yusuf Yorunç",
+      "avatar_url": "https://avatars.githubusercontent.com/u/39492561?v=4",
+      "profile": "https://yusufyorunc.com.tr",
+      "contributions": [
+        "translation"
+      ]
     }
   ],
   "contributorsPerLine": 7,
