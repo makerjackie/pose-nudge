@@ -34,20 +34,20 @@ const LanguageSettings = () => {
 
     // 앱 시작 시(컴포넌트 마운트 시) 백엔드에 현재 언어 동기화
     useEffect(() => {
-    // 1. 우선순위에 따라 초기 언어를 결정합니다.
-    const initialLang = 
-        localStorage.getItem(LANGUAGE_KEY) || // 1순위: 사용자가 직접 저장한 설정
-        i18n.language ||                     // 2순위: LanguageDetector가 감지한 시스템 언어
-        'en';                                // 3순위: 모든 것이 실패했을 때의 최종 기본값
+        // 1. 우선순위에 따라 초기 언어를 결정합니다.
+        const initialLang =
+            localStorage.getItem(LANGUAGE_KEY) || // 1순위: 사용자가 직접 저장한 설정
+            i18n.language ||                     // 2순위: LanguageDetector가 감지한 시스템 언어
+            'en';                                // 3순위: 모든 것이 실패했을 때의 최종 기본값
 
-    // 2. 결정된 언어로 앱의 상태를 일관되게 업데이트합니다.
-    if (initialLang !== i18n.language) {
-        i18n.changeLanguage(initialLang);
-    }
-    setLang(initialLang);
-    localStorage.setItem(LANGUAGE_KEY, initialLang);
-    invoke('set_current_language', { lang: initialLang }).catch(console.error);
-    
+        // 2. 결정된 언어로 앱의 상태를 일관되게 업데이트합니다.
+        if (initialLang !== i18n.language) {
+            i18n.changeLanguage(initialLang);
+        }
+        setLang(initialLang);
+        localStorage.setItem(LANGUAGE_KEY, initialLang);
+        invoke('set_current_language', { lang: initialLang }).catch(console.error);
+
     }, []);
 
     // 언어 변경 핸들러
@@ -72,6 +72,7 @@ const LanguageSettings = () => {
                         <SelectItem value="en">{t('settings.languageEnglish', 'English')}</SelectItem>
                         <SelectItem value="ja">{t('settings.languageJapanese', '日本語')}</SelectItem>
                         <SelectItem value="zh">{t('settings.languageChinese', '简体中文')}</SelectItem>
+                        <SelectItem value="tr">{t('settings.languageTurkish', 'Türkçe')}</SelectItem>
                     </SelectContent>
                 </Select>
             </CardContent>
@@ -149,15 +150,15 @@ const DetectionSettings = () => {
             <CardContent className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                       <span className="font-medium">{t('settings.batterySavingMode', '배터리 절약 모드')}</span>
-                       <p className="text-sm text-muted-foreground">{t('settings.batterySavingModeDesc', '활성화 시 모니터링 주기를 분단위로 변경하고 카메라를 절약 모드로 운영합니다.')}</p>
+                        <span className="font-medium">{t('settings.batterySavingMode', '배터리 절약 모드')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.batterySavingModeDesc', '활성화 시 모니터링 주기를 분단위로 변경하고 카메라를 절약 모드로 운영합니다.')}</p>
                     </div>
                     <Switch checked={batterySavingMode} onCheckedChange={handleBatterySavingToggle} />
                 </div>
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                       <span className="font-medium">{t('settings.monitoringInterval', '모니터링 주기')}</span>
-                       <p className="text-sm text-muted-foreground">{t('settings.monitoringIntervalDesc', '자세를 분석하는 시간 간격을 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.monitoringInterval', '모니터링 주기')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.monitoringIntervalDesc', '자세를 분석하는 시간 간격을 설정합니다.')}</p>
                     </div>
                     <Select value={monitoringInterval} onValueChange={setMonitoringInterval}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
@@ -169,8 +170,8 @@ const DetectionSettings = () => {
 
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                       <span className="font-medium">{t('settings.notificationFrequency', '알림 빈도')}</span>
-                       <p className="text-sm text-muted-foreground">{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving', '배터리 절약 모드에서는 1번으로 고정됩니다.') : t('settings.notificationFrequencyDescNormal', '최근 3번의 감지 중 몇 번 이상 나쁜 자세가 감지되면 알림을 받을지 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.notificationFrequency', '알림 빈도')}</span>
+                        <p className="text-sm text-muted-foreground">{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving', '배터리 절약 모드에서는 1번으로 고정됩니다.') : t('settings.notificationFrequencyDescNormal', '최근 3번의 감지 중 몇 번 이상 나쁜 자세가 감지되면 알림을 받을지 설정합니다.')}</p>
                     </div>
                     <Select value={frequency} onValueChange={setFrequency} disabled={batterySavingMode}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
@@ -182,9 +183,9 @@ const DetectionSettings = () => {
                     </Select>
                 </div>
                 <div className="flex items-center justify-between">
-                     <div className="space-y-1">
+                    <div className="space-y-1">
                         <span className="font-medium">{t('settings.turtleNeckSensitivity', '거북목 감지 강도')}</span>
-                         <p className="text-sm text-muted-foreground">{t('settings.turtleNeckSensitivityDesc', '거북목 자세를 얼마나 엄격하게 감지할지 설정합니다.')}</p>
+                        <p className="text-sm text-muted-foreground">{t('settings.turtleNeckSensitivityDesc', '거북목 자세를 얼마나 엄격하게 감지할지 설정합니다.')}</p>
                     </div>
                     <Select value={turtleNeckSensitivity} onValueChange={setTurtleNeckSensitivity}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
@@ -246,7 +247,7 @@ const CameraSettings = () => {
         const newIndex = parseInt(value, 10);
         setSelectedCameraIndex(value);
         localStorage.setItem(CAMERA_INDEX_KEY, value);
-        
+
         invoke('set_selected_camera', { index: newIndex })
             .catch(e => console.error(t('settings.cameraErrorSetSelected', '선택된 카메라를 백엔드에 설정하는 중 오류 발생:'), e));
     };
@@ -262,8 +263,8 @@ const CameraSettings = () => {
                 alert(t('settings.cameraPermissionDirect', '시스템 설정 > 개인 정보 보호 및 보안 > 카메라에서 앱 권한을 직접 허용해주세요.'));
             }
         } catch (error) {
-              console.error(t('settings.settingsErrorOpen', '설정 창을 여는 중 오류 발생:'), error);
-              alert(t('settings.cameraPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 개인 정보 보호 및 보안 > 카메라로 이동하여 권한을 확인해주세요.'));
+            console.error(t('settings.settingsErrorOpen', '설정 창을 여는 중 오류 발생:'), error);
+            alert(t('settings.cameraPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 개인 정보 보호 및 보안 > 카메라로 이동하여 권한을 확인해주세요.'));
         }
     };
 

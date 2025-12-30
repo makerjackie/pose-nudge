@@ -1,5 +1,10 @@
 # Contributing to Pose Nudge
 
+<p align="center">
+  <a href="./CONTRIBUTING.md"><img alt="Language-English" src="https://img.shields.io/badge/Language-English-blue?style=for-the-badge"></a>
+  <a href="./CONTRIBUTING.tr.md"><img alt="Dil-Türkçe" src="https://img.shields.io/badge/Dil-Türkçe-blue?style=for-the-badge"></a>
+</p>
+
 First off, thank you for considering contributing to Pose Nudge! Your help is essential for keeping it great.
 
 This document provides a set of guidelines for contributing to the project. These are mostly guidelines, not rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
