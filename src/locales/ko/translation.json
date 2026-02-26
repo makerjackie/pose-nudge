@@ -148,6 +148,7 @@
     "notificationErrorOpen": "알림 설정 창을 여는 중 오류 발생:",
     "cameraPermissionManual": "설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 개인 정보 보호 및 보안 > 카메라로 이동하여 권한을 확인해주세요.",
     "cameraPermissionDirect": "시스템 설정 > 개인 정보 보호 및 보안 > 카메라에서 앱 권한을 직접 허용해주세요.",
+    "cameraPermissionLinux": "Linux에서는 앱 전용 카메라 권한 창이 자동으로 열리지 않을 수 있습니다. 카메라를 사용하는 다른 앱을 종료하고 Pose Nudge를 다시 실행한 뒤 카메라를 다시 선택해 주세요. Flatpak/Snap 환경이라면 포털/샌드박스 권한도 확인해 주세요.",
     "appRestartManual": "앱을 수동으로 재시작해주세요.",
     "notificationPermissionManual": "시스템 설정 > 알림에서 앱의 알림 권한을 직접 허용해주세요.",
     "notificationPermissionDirect": "설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 알림으로 이동하여 권한을 확인해주세요."
@@ -162,6 +163,7 @@
     "calibrationNotReady": "모델, 웹캠 또는 저장소가 준비되지 않았습니다.",
     "calibrationError": "자세 캘리브레이션에 실패했습니다: {{error}}",
     "permissionError": "웹캠에 접근할 수 없습니다. 카메라 권한을 확인해주세요.",
+    "permissionErrorLinux": "Linux에서 웹캠 접근에 실패했습니다. 다른 앱이 카메라를 사용 중인지 확인하고 설정에서 카메라를 다시 선택해 주세요.",
     "currentScore": "현재 자세 점수",
     "analyzing": "분석 중...",
     "realtimeStatus": "실시간 분석 현황",

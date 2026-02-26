@@ -17,8 +17,18 @@ import {
   Heart,
 } from 'lucide-react';
 import './App.css';
-import './i18n';
+import i18n from './i18n';
 import { useTranslation } from 'react-i18next';
+
+const normalizeLanguage = (lang: string | undefined): string => {
+  if (!lang) return 'en';
+  const lowered = lang.toLowerCase();
+  if (lowered.startsWith('ko')) return 'ko';
+  if (lowered.startsWith('ja')) return 'ja';
+  if (lowered.startsWith('zh')) return 'zh';
+  if (lowered.startsWith('tr')) return 'tr';
+  return 'en';
+};
 // --- 페이지 컴포넌트 정의 ---
 
 // 정보 페이지 컴포넌트
@@ -140,6 +150,26 @@ function App() {
 
   const ActiveComponent = navItems.find(item => item.id === activeComponentId)?.component || Dashboard;
   const activeLabel = t(`nav.${activeComponentId}`, activeComponentId);
+
+  useEffect(() => {
+    const syncLanguageToBackend = (lang: string | undefined) => {
+      const normalized = normalizeLanguage(lang);
+      localStorage.setItem('pose_nudge_language', normalized);
+      invoke('set_current_language', { lang: normalized }).catch(console.error);
+    };
+
+    syncLanguageToBackend(i18n.resolvedLanguage ?? i18n.language);
+
+    const handleLanguageChanged = (lang: string) => {
+      syncLanguageToBackend(lang);
+    };
+
+    i18n.on('languageChanged', handleLanguageChanged);
+
+    return () => {
+      i18n.off('languageChanged', handleLanguageChanged);
+    };
+  }, []);
 
   // 앱 시작 시 설정 동기화
   useEffect(() => {
