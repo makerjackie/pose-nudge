@@ -1,5 +1,7 @@
 # Changelog
 
+> This file is managed by release-please. Do not edit release sections manually.
+
 All notable changes to **Pose Nudge** will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
@@ -68,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
-For more details about each version, see the [releases page](https://github.com/your-username/pose-nudge/releases).
+For more details about each version, see the [releases page](https://github.com/dduldduck/pose-nudge/releases).
 
 ---
 

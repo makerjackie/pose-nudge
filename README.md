@@ -72,11 +72,13 @@ Pose Nudge is a powerful desktop application that uses your webcam to analyze po
 
 Download the latest version of Pose Nudge for your operating system.
 
-| Operating System | File Format | Download Link |
+| Operating System | Install Files | Download Link |
 | :---: | :---: | :---: |
-| 💻 **Windows (To be modified)** | `.exe` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
-| 🍏 **macOS** | `.dmg` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
-| 🐧 **Linux (To be modified)** | `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 💻 **Windows** | `.msi`, `.exe (NSIS)` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 🍏 **macOS** | `.dmg` (Apple Silicon / Intel) | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 🐧 **Linux** | `.deb`, `.rpm`, `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+
+If AppImage has graphics startup problems on Linux, try launching with `WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Pose.Nudge*.AppImage` or install the `.deb`/`.rpm` package.
 
 ---
 
@@ -103,6 +105,12 @@ npm install
 # 3. Run in development mode
 npm run tauri dev
 ```
+
+### Release Process (Automated)
+
+- `release-please` creates/updates release PRs from conventional commits on `main`.
+- Merging the release PR updates versions in `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and updates `CHANGELOG.md`.
+- After the GitHub release is published, `.github/workflows/release.yml` builds and uploads installers for Windows/macOS/Linux.
 
 ### Project Structure
 ```
