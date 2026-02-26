@@ -17,6 +17,8 @@ const NOTIFICATION_FREQUENCY_KEY = "pose_nudge_notification_frequency";
 const TURTLE_NECK_SENSITIVITY_KEY = "pose_nudge_turtle_neck_sensitivity";
 const SHOULDER_SENSITIVITY_KEY = "pose_nudge_shoulder_sensitivity";
 const CAMERA_INDEX_KEY = "pose_nudge_camera_index";
+const CAMERA_NAME_KEY = "pose_nudge_camera_name";
+const LEGACY_CAMERA_DEVICE_KEY = "pose_nudge_camera";
 const MONITORING_INTERVAL_KEY = "pose_nudge_monitoring_interval";
 const BATTERY_SAVING_MODE_KEY = "pose_nudge_battery_saving_mode";
 
@@ -25,6 +27,9 @@ interface CameraDetail {
     index: number;
     name: string;
 }
+
+const normalizeCameraName = (value: string): string =>
+    value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 // --- Components ---
 
@@ -221,6 +226,45 @@ const CameraSettings = () => {
         () => localStorage.getItem(CAMERA_INDEX_KEY) || '0'
     );
 
+    const syncPreviewCameraDevice = async (cameraName: string, fallbackIndex: number) => {
+        if (!navigator.mediaDevices?.enumerateDevices) {
+            return;
+        }
+
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = devices.filter((device) => device.kind === 'videoinput');
+
+            if (videoInputs.length === 0) {
+                return;
+            }
+
+            const normalizedTarget = normalizeCameraName(cameraName);
+            const matchedByName = normalizedTarget
+                ? videoInputs.find((device) => {
+                    const normalizedLabel = normalizeCameraName(device.label);
+                    return normalizedLabel.length > 0 && (
+                        normalizedLabel.includes(normalizedTarget)
+                        || normalizedTarget.includes(normalizedLabel)
+                    );
+                })
+                : undefined;
+
+            const matchedByIndex = Number.isInteger(fallbackIndex)
+                && fallbackIndex >= 0
+                && fallbackIndex < videoInputs.length
+                ? videoInputs[fallbackIndex]
+                : videoInputs[0];
+
+            const resolvedDeviceId = (matchedByName ?? matchedByIndex)?.deviceId;
+            if (resolvedDeviceId) {
+                localStorage.setItem(LEGACY_CAMERA_DEVICE_KEY, resolvedDeviceId);
+            }
+        } catch (error) {
+            console.error('프리뷰 카메라 동기화 실패:', error);
+        }
+    };
+
     useEffect(() => {
         const getCamerasFromBackend = async () => {
             try {
@@ -228,10 +272,20 @@ const CameraSettings = () => {
                 setCameras(availableCameras);
 
                 const savedIndex = localStorage.getItem(CAMERA_INDEX_KEY) || '0';
-                if (!availableCameras.some(cam => cam.index.toString() === savedIndex)) {
-                    const defaultIndex = availableCameras.length > 0 ? availableCameras[0].index.toString() : '0';
-                    setSelectedCameraIndex(defaultIndex);
-                    localStorage.setItem(CAMERA_INDEX_KEY, defaultIndex);
+                const hasSavedCamera = availableCameras.some((cam) => cam.index.toString() === savedIndex);
+                const resolvedIndex = hasSavedCamera
+                    ? savedIndex
+                    : availableCameras.length > 0
+                        ? availableCameras[0].index.toString()
+                        : '0';
+
+                setSelectedCameraIndex(resolvedIndex);
+                localStorage.setItem(CAMERA_INDEX_KEY, resolvedIndex);
+
+                const selectedCamera = availableCameras.find((cam) => cam.index.toString() === resolvedIndex);
+                if (selectedCamera) {
+                    localStorage.setItem(CAMERA_NAME_KEY, selectedCamera.name);
+                    await syncPreviewCameraDevice(selectedCamera.name, selectedCamera.index);
                 }
 
             } catch (error) {
@@ -246,6 +300,12 @@ const CameraSettings = () => {
         const newIndex = parseInt(value, 10);
         setSelectedCameraIndex(value);
         localStorage.setItem(CAMERA_INDEX_KEY, value);
+
+        const selectedCamera = cameras.find((camera) => camera.index === newIndex);
+        if (selectedCamera) {
+            localStorage.setItem(CAMERA_NAME_KEY, selectedCamera.name);
+            void syncPreviewCameraDevice(selectedCamera.name, selectedCamera.index);
+        }
 
         invoke('set_selected_camera', { index: newIndex })
             .catch(e => console.error(t('settings.cameraErrorSetSelected', '선택된 카메라를 백엔드에 설정하는 중 오류 발생:'), e));
