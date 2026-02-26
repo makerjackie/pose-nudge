@@ -7,6 +7,15 @@ All notable changes to **Pose Nudge** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.2.0...pose-nudge-v1.2.1) (2026-02-26)
+
+
+### Bug Fixes
+
+* localize webcam fallback messages across locales ([7c13db6](https://github.com/DDULDDUCK/pose-nudge/commit/7c13db62f6b38ba7b712eec4e3703d09a294e107))
+* stabilize monitoring preview and battery-saving capture ([d5f312a](https://github.com/DDULDDUCK/pose-nudge/commit/d5f312a0c6a15027900c31b4a5e53dab2de50a9d))
+* stabilize Windows monitoring preview and battery-saving capture ([7f4e82c](https://github.com/DDULDDUCK/pose-nudge/commit/7f4e82c6e2b32d349dd2b97eed51f30186fa1693))
+
 ## [1.2.0](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.1.0...pose-nudge-v1.2.0) (2026-02-26)
 
 
