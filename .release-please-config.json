@@ -1,10 +1,16 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "label": "autorelease: pending",
+  "release-label": "autorelease: tagged",
+  "sequential-calls": true,
+  "release-search-depth": 400,
+  "commit-search-depth": 500,
   "packages": {
     ".": {
       "release-type": "node",
       "package-name": "pose-nudge",
       "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
       "include-v-in-tag": true,
       "extra-files": [
         {
