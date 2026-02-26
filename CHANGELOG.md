@@ -7,6 +7,14 @@ All notable changes to **Pose Nudge** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.2.2...pose-nudge-v1.2.3) (2026-02-26)
+
+
+### Bug Fixes
+
+* **ci:** resolve artifact tag for push-context workflow calls ([5fc377c](https://github.com/DDULDDUCK/pose-nudge/commit/5fc377c148a1fc43c7336305fe0f5f957fd32a97))
+* **ci:** resolve release tag for reusable workflow calls ([499563e](https://github.com/DDULDDUCK/pose-nudge/commit/499563ebecd4101e5017a6226c3225bcec880fa3))
+
 ## [1.2.2](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.2.1...pose-nudge-v1.2.2) (2026-02-26)
 
 
