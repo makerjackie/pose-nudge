@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose, Engine as _};
 use image::{ImageBuffer, Rgb};
 use log::info;
-use ndarray::Array4;
 use ort::{
     session::{
         builder::{GraphOptimizationLevel, SessionBuilder},
@@ -289,8 +288,7 @@ impl PoseAnalyzer {
                 input_data.push(pixel.0[channel] as f32 / 255.0);
             }
         }
-        let input_array = Array4::from_shape_vec((1, 3, 640, 640), input_data)?;
-        Ok(Value::from_array(input_array)?.into())
+        Ok(Value::from_array(([1_usize, 3, 640, 640], input_data))?.into())
     }
 
     // 모델 출력값을 후처리하여 키포인트 데이터로 변환
