@@ -40,15 +40,19 @@ jobs:
       - name: Resolve release tag
         id: release-tag
         shell: bash
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tagName }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG_NAME: ${{ github.event.inputs.tagName }}
         run: |
-          TAG_NAME=""
+          TAG_NAME="${INPUT_TAG_NAME:-}"
 
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
-          elif [ "${{ github.event_name }}" = "workflow_call" ]; then
-            TAG_NAME="${{ inputs.tagName }}"
-          else
-            TAG_NAME="${{ github.event.inputs.tagName }}"
+          if [ -z "$TAG_NAME" ]; then
+            TAG_NAME="${RELEASE_TAG_NAME:-}"
+          fi
+
+          if [ -z "$TAG_NAME" ]; then
+            TAG_NAME="${DISPATCH_TAG_NAME:-}"
           fi
 
           if [ -z "$TAG_NAME" ]; then
