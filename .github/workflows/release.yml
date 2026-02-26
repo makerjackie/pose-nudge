@@ -9,6 +9,12 @@ on:
         description: Existing release tag to publish assets for (for manual reruns)
         required: true
         type: string
+  workflow_call:
+    inputs:
+      tagName:
+        description: Release tag to publish assets for
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -35,11 +41,22 @@ jobs:
         id: release-tag
         shell: bash
         run: |
+          TAG_NAME=""
+
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "value=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_call" ]; then
+            TAG_NAME="${{ inputs.tagName }}"
           else
-            echo "value=${{ github.event.inputs.tagName }}" >> "$GITHUB_OUTPUT"
+            TAG_NAME="${{ github.event.inputs.tagName }}"
           fi
+
+          if [ -z "$TAG_NAME" ]; then
+            echo "::error::Release tag could not be resolved from event '${{ github.event_name }}'."
+            exit 1
+          fi
+
+          echo "value=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies (Ubuntu only)
         if: runner.os == 'Linux'
