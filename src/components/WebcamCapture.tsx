@@ -39,7 +39,12 @@ interface MonitoringStatus {
 }
 
 const CAMERA_INDEX_KEY = 'pose_nudge_camera_index';
+const CAMERA_NAME_KEY = 'pose_nudge_camera_name';
 const LEGACY_CAMERA_DEVICE_KEY = 'pose_nudge_camera';
+const BATTERY_SAVING_MODE_KEY = 'pose_nudge_battery_saving_mode';
+
+const normalizeCameraName = (value: string): string =>
+  value.toLowerCase().replace(/\s+/g, ' ').trim();
 
 // --- 상태 표시 UI 컴포넌트 ---
 const StatusItem: React.FC<{ label: string; isBad: boolean; detectedText?: string; }> = ({ label, isBad, detectedText }) => {
@@ -75,6 +80,17 @@ const WebcamCapture: React.FC = () => {
   const [calibratedImage, setCalibratedImage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
+  const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
+  const [batterySavingMode, setBatterySavingMode] = useState(
+    () => localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true'
+  );
+  const [backendPreviewFrame, setBackendPreviewFrame] = useState<string | null>(null);
+  const [useBackendPreview, setUseBackendPreview] = useState(false);
+  const shouldUseBackendPreview = useBackendPreview || (
+    isMonitoring
+    && batterySavingMode
+    && currentPlatform === 'windows'
+  );
 
   const videoConstraints = useMemo(
     () => ({
@@ -97,21 +113,37 @@ const WebcamCapture: React.FC = () => {
 
       try {
         const savedIndexRaw = localStorage.getItem(CAMERA_INDEX_KEY);
+        const savedCameraName = localStorage.getItem(CAMERA_NAME_KEY);
         const legacyDeviceId = localStorage.getItem(LEGACY_CAMERA_DEVICE_KEY);
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter((device) => device.kind === 'videoinput');
 
         let nextDeviceId: string | undefined;
 
-        if (savedIndexRaw !== null) {
-          const parsedIndex = Number.parseInt(savedIndexRaw, 10);
-          if (!Number.isNaN(parsedIndex) && parsedIndex >= 0 && parsedIndex < videoInputs.length) {
-            nextDeviceId = videoInputs[parsedIndex].deviceId;
+        if (savedCameraName) {
+          const normalizedTarget = normalizeCameraName(savedCameraName);
+          const matchedByName = normalizedTarget.length > 0
+            ? videoInputs.find((device) => {
+                const normalizedLabel = normalizeCameraName(device.label);
+                return normalizedLabel.length > 0
+                  && (normalizedLabel.includes(normalizedTarget) || normalizedTarget.includes(normalizedLabel));
+              })
+            : undefined;
+
+          if (matchedByName) {
+            nextDeviceId = matchedByName.deviceId;
           }
         }
 
         if (!nextDeviceId && legacyDeviceId && videoInputs.some((device) => device.deviceId === legacyDeviceId)) {
           nextDeviceId = legacyDeviceId;
+        }
+
+        if (savedIndexRaw !== null) {
+          const parsedIndex = Number.parseInt(savedIndexRaw, 10);
+          if (!nextDeviceId && !Number.isNaN(parsedIndex) && parsedIndex >= 0 && parsedIndex < videoInputs.length) {
+            nextDeviceId = videoInputs[parsedIndex].deviceId;
+          }
         }
 
         if (!nextDeviceId && videoInputs.length > 0) {
@@ -168,16 +200,19 @@ const WebcamCapture: React.FC = () => {
   // const startMonitoring = useCallback(...);
   // const stopMonitoring = useCallback(...);
 
-  // '캘리브레이션' 기능은 프론트엔드 웹캠을 사용해야 하므로 그대로 유지합니다.
+  // 캘리브레이션은 브라우저 웹캠 또는 백엔드 프리뷰 프레임을 사용합니다.
   const handleCalibrate = useCallback(async () => {
-    if (!webcamRef.current || !isModelInitialized || !store) {
+    const hasCaptureSource = Boolean(webcamRef.current) || Boolean(shouldUseBackendPreview && backendPreviewFrame);
+    if (!hasCaptureSource || !isModelInitialized || !store) {
       setError(t('webcam.calibrationNotReady', '모델, 웹캠 또는 저장소가 준비되지 않았습니다.'));
       return;
     }
     setCalibrationStatus('calibrating');
     setError('');
     try {
-      const imageSrc = webcamRef.current.getScreenshot();
+      const imageSrc = shouldUseBackendPreview && backendPreviewFrame
+        ? backendPreviewFrame
+        : webcamRef.current?.getScreenshot();
       if (!imageSrc) throw new Error(t('webcam.captureError', '웹캠 이미지를 캡처할 수 없습니다.'));
       
       const filePath = await invoke<string>('save_calibrated_image', { imageData: imageSrc });
@@ -197,13 +232,39 @@ const WebcamCapture: React.FC = () => {
     } finally {
         setTimeout(() => setCalibrationStatus('idle'), 3000);
     }
-  }, [isModelInitialized, store, t]);
+  }, [backendPreviewFrame, isModelInitialized, shouldUseBackendPreview, store, t]);
+
+  useEffect(() => {
+    const syncBatterySavingMode = () => {
+      setBatterySavingMode(localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true');
+    };
+
+    syncBatterySavingMode();
+
+    window.addEventListener('focus', syncBatterySavingMode);
+    document.addEventListener('visibilitychange', syncBatterySavingMode);
+
+    return () => {
+      window.removeEventListener('focus', syncBatterySavingMode);
+      document.removeEventListener('visibilitychange', syncBatterySavingMode);
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      setCurrentPlatform(platform());
+    } catch (platformError) {
+      console.error('플랫폼 확인 실패:', platformError);
+    }
+  }, []);
 
   useEffect(() => {
     const loadInitialData = async () => {
       try {
         const storeInstance = await load('.settings.dat');
         setStore(storeInstance);
+
+        setBatterySavingMode(localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true');
 
         const savedImagePath = await storeInstance.get<string>('calibratedImagePath');
         if (savedImagePath) {
@@ -213,6 +274,9 @@ const WebcamCapture: React.FC = () => {
       
         const status = await invoke<MonitoringStatus>('get_monitoring_status');
         setIsMonitoring(status.active);
+        if (!status.active) {
+          setAnalysisResult(null);
+        }
       } catch (err) {
         console.error('초기 데이터 로드 실패:', err);
       }
@@ -226,7 +290,26 @@ const WebcamCapture: React.FC = () => {
       }),
       // ★★★★★ 추가: 시스템 트레이에서 상태 변경 시 UI 동기화 ★★★★★
       listen<{ active: boolean }>('monitoring-state-changed', (event) => {
-        setIsMonitoring(event.payload.active);
+        const nextActive = event.payload.active;
+        const nextBatterySavingMode = localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true';
+
+        setBatterySavingMode(nextBatterySavingMode);
+        setIsMonitoring(nextActive);
+
+        if (!nextActive) {
+          setAnalysisResult(null);
+          setBackendPreviewFrame(null);
+          setUseBackendPreview(false);
+        }
+      }),
+      listen<string>('camera-preview-frame', (event) => {
+        if (!event.payload) {
+          return;
+        }
+
+        setBackendPreviewFrame(event.payload);
+        setIsWebcamReady(true);
+        setError('');
       }),
       // ★★★★★ 추가: 백엔드에서 온 실시간 분석 결과를 받아 UI 업데이트 ★★★★★
       listen<PostureAnalysis>('analysis-update', (event) => {
@@ -253,8 +336,39 @@ const WebcamCapture: React.FC = () => {
     }
   }, [isWebcamReady, isModelInitialized, initializeModel]);
 
-  const onUserMedia = useCallback(() => setIsWebcamReady(true), []);
+  useEffect(() => {
+    if (!isMonitoring) {
+      setAnalysisResult(null);
+      setBackendPreviewFrame(null);
+      setUseBackendPreview(false);
+    }
+  }, [isMonitoring]);
+
+  useEffect(() => {
+    if (!isMonitoring || !shouldUseBackendPreview || backendPreviewFrame) {
+      return;
+    }
+
+    invoke('request_preview_frame').catch((requestError) => {
+      console.error('프리뷰 프레임 즉시 요청 실패:', requestError);
+    });
+  }, [backendPreviewFrame, isMonitoring, shouldUseBackendPreview]);
+
+  const onUserMedia = useCallback(() => {
+    setIsWebcamReady(true);
+    setUseBackendPreview(false);
+    setError('');
+  }, []);
   const onUserMediaError = useCallback(async () => {
+    setIsWebcamReady(false);
+    setAnalysisResult(null);
+    setUseBackendPreview(isMonitoring);
+
+    if (isMonitoring) {
+      setError(t('webcam.previewFallback', '브라우저 웹캠 접근에 실패해 분석용 카메라 화면으로 전환합니다.'));
+      return;
+    }
+
     try {
       const os = await platform();
       if (os === 'linux') {
@@ -271,7 +385,7 @@ const WebcamCapture: React.FC = () => {
     }
 
     setError(t('webcam.permissionError', '웹캠에 접근할 수 없습니다.'));
-  }, [t]);
+  }, [isMonitoring, t]);
 
   const getPostureStatusColor = (score?: number | null): string => {
     if (score == null) return 'ring-slate-300';
@@ -289,16 +403,30 @@ const WebcamCapture: React.FC = () => {
         <div className="lg:col-span-2 space-y-6">
           <Card className="overflow-hidden">
             <div className={`relative group`}>
-              <Webcam 
-                ref={webcamRef} 
-                audio={false} 
-                videoConstraints={videoConstraints} 
-                onUserMedia={onUserMedia} 
-                onUserMediaError={onUserMediaError} 
-                className="w-full h-full object-contain aspect-video transition-all bg-muted"
-                screenshotFormat="image/jpeg"
-              />
-              <div className={`absolute inset-0 transition-all ring-4 ring-inset pointer-events-none ${getPostureStatusColor(analysisResult?.posture_score)}`} />
+              {shouldUseBackendPreview ? (
+                backendPreviewFrame ? (
+                  <img
+                    src={backendPreviewFrame}
+                    alt={t('webcam.backendPreviewAlt', 'Monitoring camera preview')}
+                    className="w-full h-full object-contain aspect-video transition-all bg-muted"
+                  />
+                ) : (
+                  <div className="w-full h-full aspect-video flex items-center justify-center bg-muted text-muted-foreground text-sm">
+                    {t('webcam.waitingPreviewFrame', '카메라 프레임을 불러오는 중...')}
+                  </div>
+                )
+              ) : (
+                <Webcam
+                  ref={webcamRef}
+                  audio={false}
+                  videoConstraints={videoConstraints}
+                  onUserMedia={onUserMedia}
+                  onUserMediaError={onUserMediaError}
+                  className="w-full h-full object-contain aspect-video transition-all bg-muted"
+                  screenshotFormat="image/jpeg"
+                />
+              )}
+              <div className={`absolute inset-0 transition-all ring-4 ring-inset pointer-events-none ${getPostureStatusColor(isMonitoring ? analysisResult?.posture_score : null)}`} />
               {isMonitoring && analysisResult && (
                 <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm text-white p-3 rounded-lg text-left">
                   <p className="text-sm font-medium">{t('webcam.currentScore', '현재 자세 점수')}</p>

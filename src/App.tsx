@@ -176,6 +176,11 @@ function App() {
     const batterySavingMode = localStorage.getItem('pose_nudge_battery_saving_mode') === 'true';
     invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
 
+    const savedCameraIndex = Number.parseInt(localStorage.getItem('pose_nudge_camera_index') || '0', 10);
+    if (!Number.isNaN(savedCameraIndex) && savedCameraIndex >= 0) {
+      invoke('set_selected_camera', { index: savedCameraIndex }).catch(console.error);
+    }
+
     const monitoringInterval = localStorage.getItem('pose_nudge_monitoring_interval') || '3';
     if (batterySavingMode) {
       invoke('set_monitoring_interval', { intervalMins: parseInt(monitoringInterval, 10) }).catch(console.error);
@@ -189,6 +194,7 @@ function App() {
       turtleSensitivity: parseInt(localStorage.getItem('pose_nudge_turtle_neck_sensitivity') || '2', 10),
       shoulderSensitivity: parseInt(localStorage.getItem('pose_nudge_shoulder_sensitivity') || '2', 10),
     }).catch(console.error);
+
   }, []);
 
   return (

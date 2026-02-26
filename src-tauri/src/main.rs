@@ -25,7 +25,7 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 
-use image::{ImageBuffer, Rgb};
+use image::{codecs::jpeg::JpegEncoder, ImageBuffer, Rgb};
 use nokhwa::{
     pixel_format::RgbFormat,
     utils::{ApiBackend, CameraIndex, CameraInfo, RequestedFormat, RequestedFormatType},
@@ -115,6 +115,7 @@ struct CameraDetail {
 struct AppState {
     pose_analyzer: Arc<PoseAnalyzer>,
     monitoring_active: Arc<Mutex<bool>>,
+    force_capture_now: Arc<Mutex<bool>>,
     last_alert_time: Arc<Mutex<Instant>>,
     alert_messages: Arc<Mutex<Vec<String>>>,
     camera: Arc<Mutex<Option<Camera>>>,
@@ -202,21 +203,42 @@ async fn initialize_pose_model(
 #[tauri::command]
 async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *state.monitoring_active.lock().unwrap() = true;
+    *state.force_capture_now.lock().unwrap() = true;
+
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
-        let monitoring_off_icon_path = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource).unwrap();
-        let bytes = fs::read(&monitoring_off_icon_path).unwrap();
-        let monitoring_off_icon = Image::from_bytes(&bytes).unwrap();
-        if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-            error!("아이콘 변경 실패: {}", e);
+        if let Some(default_icon) = app.default_window_icon() {
+            if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
+                error!("아이콘 변경 실패: {}", e);
+            }
+        } else {
+            warn!("기본 창 아이콘을 찾을 수 없습니다.");
         }
     }
+    let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
     info!("실시간 모니터링 시작");
     Ok(())
+}
+
+fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Result<String, String> {
+    let mut jpeg_bytes: Vec<u8> = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 70);
+
+    encoder
+        .encode(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ColorType::Rgb8.into(),
+        )
+        .map_err(|e| format!("프리뷰 프레임 JPEG 인코딩 실패: {}", e))?;
+
+    Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg_bytes)))
 }
 
 #[tauri::command]
 async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *state.monitoring_active.lock().unwrap() = false;
+    *state.force_capture_now.lock().unwrap() = false;
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
         if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
             if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
@@ -234,6 +256,7 @@ async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(
             error!("아이콘 경로 해결 실패");
         }
     }
+    let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
     info!("실시간 모니터링 중지");
     Ok(())
 }
@@ -277,6 +300,15 @@ fn get_alert_messages(state: State<'_, AppState>) -> Result<Vec<String>, String>
 fn get_monitoring_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let monitoring_active = *state.monitoring_active.lock().unwrap();
     Ok(serde_json::json!({ "active": monitoring_active }))
+}
+
+#[tauri::command]
+fn request_preview_frame(state: State<'_, AppState>) -> Result<(), String> {
+    if *state.monitoring_active.lock().unwrap() {
+        *state.force_capture_now.lock().unwrap() = true;
+        info!("즉시 프리뷰 프레임 요청 수신");
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -377,6 +409,11 @@ async fn set_selected_camera(state: State<'_, AppState>, index: u32) -> Result<(
     }
 
     *state.selected_camera_index.lock().unwrap() = index;
+
+    if *state.monitoring_active.lock().unwrap() {
+        *state.force_capture_now.lock().unwrap() = true;
+    }
+
     Ok(())
 }
 
@@ -418,6 +455,7 @@ async fn set_monitoring_interval(
 #[tauri::command]
 async fn set_battery_saving_mode(state: State<'_, AppState>, mode: bool) -> Result<(), String> {
     *state.battery_saving_mode.lock().unwrap() = mode;
+    *state.force_capture_now.lock().unwrap() = true;
     info!("배터리 절약 모드 설정: {}", mode);
 
     if mode {
@@ -522,8 +560,21 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
             Duration::from_secs(secs.max(1))
         };
 
-        if last_analysis_time.elapsed() < interval_duration {
+        let force_capture = {
+            let mut force_capture_now = state.force_capture_now.lock().unwrap();
+            let should_capture = *force_capture_now;
+            if should_capture {
+                *force_capture_now = false;
+            }
+            should_capture
+        };
+
+        if !force_capture && last_analysis_time.elapsed() < interval_duration {
             continue;
+        }
+
+        if force_capture {
+            info!("강제 즉시 캡처 실행");
         }
 
         last_analysis_time = Instant::now();
@@ -532,41 +583,77 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
         let selected_index = *state.selected_camera_index.lock().unwrap();
         let buffer_option = if battery_saving {
             info!("절약 모드: 카메라 캡처 시도, 인덱스 {}", selected_index);
-            // 절약 모드: 모니터링할 때만 카메라 켜고 끄기
-            let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-            match Camera::new(CameraIndex::Index(selected_index), requested) {
-                Ok(mut cam) => {
-                    if let Err(e) = cam.open_stream() {
-                        error!("카메라 스트림 열기 실패: {}", e);
-                        None
-                    } else {
-                        info!("절약 모드: 카메라 스트림 열림");
-                        // 카메라 로딩을 위해 잠시 대기
-                        tokio::time::sleep(Duration::from_secs(3)).await;
-                        // 첫 프레임을 버려서 최신 프레임을 얻음
-                        let _ = cam.frame();
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        let buffer = cam.frame();
-                        let result = if let Ok(buf) = buffer {
-                            info!("절약 모드: 카메라 캡처 성공");
-                            Some(buf)
-                        } else {
-                            error!("절약 모드: 카메라 캡처 실패: {:?}", buffer.err());
-                            None
-                        };
-                        if let Err(e) = cam.stop_stream() {
-                            error!("카메라 스트림 닫기 실패: {}", e);
-                        } else {
-                            info!("절약 모드: 카메라 스트림 닫음");
+            // 절약 모드: 모니터링할 때만 카메라를 켜고 끄되,
+            // Windows(MF) 자원 부족 오류를 줄이기 위해 저 FPS 형식을 우선 시도한다.
+            let requested_types = [
+                RequestedFormatType::HighestFrameRate(15),
+                RequestedFormatType::HighestFrameRate(10),
+                RequestedFormatType::AbsoluteHighestFrameRate,
+                RequestedFormatType::None,
+            ];
+
+            let mut captured_buffer = None;
+
+            for requested_type in requested_types {
+                let requested = RequestedFormat::new::<RgbFormat>(requested_type);
+                info!("절약 모드: 포맷 시도 {:?}", requested_type);
+
+                match Camera::new(CameraIndex::Index(selected_index), requested) {
+                    Ok(mut cam) => {
+                        if let Err(e) = cam.open_stream() {
+                            error!("카메라 스트림 열기 실패 ({:?}): {}", requested_type, e);
+                            continue;
                         }
-                        result
+
+                        info!("절약 모드: 카메라 스트림 열림 ({:?})", requested_type);
+                        tokio::time::sleep(Duration::from_millis(700)).await;
+
+                        let mut frame_captured = None;
+                        for attempt in 1..=3 {
+                            match cam.frame() {
+                                Ok(buffer) => {
+                                    if attempt > 1 {
+                                        info!("절약 모드: {}회 재시도 후 캡처 성공", attempt - 1);
+                                    } else {
+                                        info!("절약 모드: 카메라 캡처 성공");
+                                    }
+                                    frame_captured = Some(buffer);
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "절약 모드: 프레임 캡처 실패 ({:?}, attempt={}): {}",
+                                        requested_type,
+                                        attempt,
+                                        e
+                                    );
+                                    tokio::time::sleep(Duration::from_millis(250)).await;
+                                }
+                            }
+                        }
+
+                        if let Err(e) = cam.stop_stream() {
+                            error!("카메라 스트림 닫기 실패 ({:?}): {}", requested_type, e);
+                        } else {
+                            info!("절약 모드: 카메라 스트림 닫음 ({:?})", requested_type);
+                        }
+
+                        if frame_captured.is_some() {
+                            captured_buffer = frame_captured;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("카메라 초기화 실패 ({:?}): {}", requested_type, e);
                     }
                 }
-                Err(e) => {
-                    error!("카메라 초기화 실패: {}", e);
-                    None
-                }
             }
+
+            if captured_buffer.is_none() {
+                error!("절약 모드: 사용 가능한 포맷에서 카메라 캡처에 모두 실패");
+            }
+
+            captured_buffer
         } else {
             // 일반 모드: 기존 로직
             if !ensure_continuous_camera_stream(&state) {
@@ -595,6 +682,17 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                     decoded_image.height(),
                     decoded_image.into_raw(),
                 ) {
+                    match encode_preview_frame_data_url(&rgb_image) {
+                        Ok(preview_frame_data_url) => {
+                            if let Err(e) = app_handle.emit("camera-preview-frame", &preview_frame_data_url) {
+                                error!("프리뷰 프레임 이벤트 전송 실패: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("프리뷰 프레임 생성 실패: {}", e);
+                        }
+                    }
+
                     if let Ok(result_str) = state.pose_analyzer.analyze_image_buffer(&rgb_image) {
                         info!("절약 모드: 자세 분석 성공");
                         if let Ok(result_json) = serde_json::from_str::<Value>(&result_str) {
@@ -688,7 +786,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
-        .plugin(tauri_plugin_shell::init()) 
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_log::Builder::new().targets([Target::new(TargetKind::Stdout), Target::new(TargetKind::Webview)]).level(LevelFilter::Info).build())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -711,9 +809,9 @@ pub fn run() {
             let start_monitoring_item = MenuItem::with_id(app, "start_monitoring", "Start Monitoring", true, None::<&str>)?;
             let stop_monitoring_item = MenuItem::with_id(app, "stop_monitoring", "Stop Monitoring", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&start_monitoring_item, &stop_monitoring_item, &PredefinedMenuItem::separator(app)?, &show, &quit])?;
-            
+
             #[cfg(target_os = "macos")]
-			app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             // 데스크탑에서 autostart(자동 시작) 등록 시도
             #[cfg(desktop)]
             {
@@ -730,10 +828,11 @@ pub fn run() {
 
             // ✨ 수정: app.path()가 PathResolver를 반환하므로 .resolver() 없이 바로 참조를 넘겨줍니다.
             let translations = Arc::new(Translations::new(&app.path()));
-            
+
             let app_state = AppState {
                 pose_analyzer: Arc::new(PoseAnalyzer::new()),
                 monitoring_active: Arc::new(Mutex::new(true)),
+                force_capture_now: Arc::new(Mutex::new(false)),
                 last_alert_time: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(60))),
                 alert_messages: Arc::new(Mutex::new(Vec::new())),
                 camera: Arc::new(Mutex::new(None)),
@@ -748,11 +847,15 @@ pub fn run() {
 
             let alert_app_handle = app.handle().clone();
             let alert_state = app_state.clone();
-            tauri::async_runtime::spawn(async move { background_alert_task(alert_app_handle, alert_state).await; });
+            tauri::async_runtime::spawn(async move {
+                background_alert_task(alert_app_handle, alert_state).await;
+            });
 
             let monitor_app_handle = app.handle().clone();
             let monitor_state = app_state.clone();
-            tauri::async_runtime::spawn(async move { background_monitoring_task(monitor_app_handle, monitor_state).await; });
+            tauri::async_runtime::spawn(async move {
+                background_monitoring_task(monitor_app_handle, monitor_state).await;
+            });
 
             // 모델 초기화
             let init_app_handle = app.handle().clone();
@@ -783,6 +886,7 @@ pub fn run() {
                         "start_monitoring" => {
                             info!("'Start Monitoring' 클릭됨");
                             *state.monitoring_active.lock().unwrap() = true;
+                            *state.force_capture_now.lock().unwrap() = true;
 
                             let battery_saving = *state.battery_saving_mode.lock().unwrap();
                             if !battery_saving {
@@ -825,6 +929,7 @@ pub fn run() {
                         "stop_monitoring" => {
                             info!("'Stop Monitoring' 클릭됨");
                             *state.monitoring_active.lock().unwrap() = false;
+                            *state.force_capture_now.lock().unwrap() = false;
                             if let Some(cam) = &mut *state.camera.lock().unwrap() {
                                 if cam.is_stream_open() {
                                     if let Err(e) = cam.stop_stream() {
@@ -892,6 +997,7 @@ pub fn run() {
             get_pose_recommendations,
             get_alert_messages,
             get_monitoring_status,
+            request_preview_frame,
             test_model_status,
             calibrate_user_posture,
             save_calibrated_image,
