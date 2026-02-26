@@ -21,8 +21,6 @@ jobs:
         include:
           - platform: macos-latest
             args: --target aarch64-apple-darwin --verbose
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin --verbose
           - platform: ubuntu-22.04
             args: --bundles appimage,deb,rpm --verbose
           - platform: windows-latest
