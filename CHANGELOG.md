@@ -7,6 +7,14 @@ All notable changes to **Pose Nudge** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.2.3...pose-nudge-v1.2.4) (2026-02-26)
+
+
+### Bug Fixes
+
+* **ci:** avoid release-please label step failures ([4757e60](https://github.com/DDULDDUCK/pose-nudge/commit/4757e60b57b85e151829aaf38892ec36db3deffc))
+* **ci:** stabilize release-please after release creation ([7a6a98c](https://github.com/DDULDDUCK/pose-nudge/commit/7a6a98cf695612552d2c9d3f1811699aa14255ea))
+
 ## [1.2.3](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.2.2...pose-nudge-v1.2.3) (2026-02-26)
 
 
