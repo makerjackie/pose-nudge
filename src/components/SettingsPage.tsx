@@ -48,7 +48,7 @@ const LanguageSettings = () => {
         localStorage.setItem(LANGUAGE_KEY, initialLang);
         invoke('set_current_language', { lang: initialLang }).catch(console.error);
 
-    }, []);
+    }, [i18n]);
 
     // 언어 변경 핸들러
     const handleChange = (value: string) => {
@@ -93,7 +93,7 @@ const DetectionSettings = () => {
     useEffect(() => {
         // 앱 시작 시 백엔드에 절약 모드 상태 동기화
         invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
-    }, []);
+    }, [batterySavingMode]);
 
     useEffect(() => {
         localStorage.setItem(NOTIFICATION_FREQUENCY_KEY, frequency);
@@ -139,7 +139,6 @@ const DetectionSettings = () => {
         if (checked) {
             setFrequency('1');
         }
-        invoke('set_battery_saving_mode', { mode: checked }).catch(console.error);
     };
 
     return (
@@ -241,7 +240,7 @@ const CameraSettings = () => {
         };
 
         getCamerasFromBackend();
-    }, []);
+    }, [t]);
 
     const handleCameraChange = (value: string) => {
         const newIndex = parseInt(value, 10);
@@ -259,6 +258,13 @@ const CameraSettings = () => {
                 await Command.create('open-settings', ["x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"]).execute();
             } else if (osPlatform === 'windows') {
                 await open('ms-settings:privacy-webcam');
+            } else if (osPlatform === 'linux') {
+                alert(
+                    t(
+                        'settings.cameraPermissionLinux',
+                        'Linux may not provide a direct camera permission window for this app. Close other apps using the webcam, restart Pose Nudge, and re-select the camera. If you use Flatpak or Snap, also verify portal/sandbox camera permissions.'
+                    )
+                );
             } else {
                 alert(t('settings.cameraPermissionDirect', '시스템 설정 > 개인 정보 보호 및 보안 > 카메라에서 앱 권한을 직접 허용해주세요.'));
             }
@@ -331,21 +337,24 @@ const UpdateSettings = () => {
 
                 await update.downloadAndInstall((event) => {
                     switch (event.event) {
-                        case 'Started':
+                        case 'Started': {
                             contentLength = event.data.contentLength || 0;
                             console.log(`started downloading ${event.data.contentLength} bytes`);
                             break;
-                        case 'Progress':
+                        }
+                        case 'Progress': {
                             downloaded += event.data.chunkLength;
                             const currentProgress = contentLength > 0 ? (downloaded / contentLength) * 100 : 0;
                             setProgress(Math.round(currentProgress));
                             console.log(`downloaded ${downloaded} from ${contentLength}`);
                             break;
-                        case 'Finished':
+                        }
+                        case 'Finished': {
                             console.log('download finished');
                             setIsDownloading(false);
                             setIsInstalling(true);
                             break;
+                        }
                     }
                 });
 

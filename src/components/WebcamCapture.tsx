@@ -1,9 +1,10 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import Webcam from 'react-webcam';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { platform } from '@tauri-apps/plugin-os';
 import { load, Store } from '@tauri-apps/plugin-store';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,9 @@ interface PostureAnalysis {
 interface MonitoringStatus {
   active: boolean;
 }
+
+const CAMERA_INDEX_KEY = 'pose_nudge_camera_index';
+const LEGACY_CAMERA_DEVICE_KEY = 'pose_nudge_camera';
 
 // --- 상태 표시 UI 컴포넌트 ---
 const StatusItem: React.FC<{ label: string; isBad: boolean; detectedText?: string; }> = ({ label, isBad, detectedText }) => {
@@ -70,15 +74,79 @@ const WebcamCapture: React.FC = () => {
   const [calibrationStatus, setCalibrationStatus] = useState<'idle' | 'calibrating' | 'success' | 'error'>('idle');
   const [calibratedImage, setCalibratedImage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
 
-  const getSelectedCamera = () => {
-    const id = localStorage.getItem('pose_nudge_camera');
-    return id && id !== 'null' ? id : undefined;
-  };
-  const videoConstraints = {
-    facingMode: 'user',
-    deviceId: getSelectedCamera(),
-  };
+  const videoConstraints = useMemo(
+    () => ({
+      facingMode: 'user',
+      deviceId: selectedDeviceId,
+    }),
+    [selectedDeviceId]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveSelectedDeviceId = async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        if (!cancelled) {
+          setSelectedDeviceId(undefined);
+        }
+        return;
+      }
+
+      try {
+        const savedIndexRaw = localStorage.getItem(CAMERA_INDEX_KEY);
+        const legacyDeviceId = localStorage.getItem(LEGACY_CAMERA_DEVICE_KEY);
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter((device) => device.kind === 'videoinput');
+
+        let nextDeviceId: string | undefined;
+
+        if (savedIndexRaw !== null) {
+          const parsedIndex = Number.parseInt(savedIndexRaw, 10);
+          if (!Number.isNaN(parsedIndex) && parsedIndex >= 0 && parsedIndex < videoInputs.length) {
+            nextDeviceId = videoInputs[parsedIndex].deviceId;
+          }
+        }
+
+        if (!nextDeviceId && legacyDeviceId && videoInputs.some((device) => device.deviceId === legacyDeviceId)) {
+          nextDeviceId = legacyDeviceId;
+        }
+
+        if (!nextDeviceId && videoInputs.length > 0) {
+          nextDeviceId = videoInputs[0].deviceId;
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setSelectedDeviceId(nextDeviceId);
+        if (nextDeviceId) {
+          localStorage.setItem(LEGACY_CAMERA_DEVICE_KEY, nextDeviceId);
+        }
+      } catch (deviceError) {
+        if (!cancelled) {
+          setSelectedDeviceId(undefined);
+        }
+        console.error('카메라 장치 조회 실패:', deviceError);
+      }
+    };
+
+    void resolveSelectedDeviceId();
+
+    const handleDeviceChange = () => {
+      void resolveSelectedDeviceId();
+    };
+
+    navigator.mediaDevices?.addEventListener?.('devicechange', handleDeviceChange);
+
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices?.removeEventListener?.('devicechange', handleDeviceChange);
+    };
+  }, []);
 
   const initializeModel = useCallback(async () => {
     if (isModelInitialized) return;
@@ -129,7 +197,7 @@ const WebcamCapture: React.FC = () => {
     } finally {
         setTimeout(() => setCalibrationStatus('idle'), 3000);
     }
-  }, [isModelInitialized, store]);
+  }, [isModelInitialized, store, t]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -167,8 +235,12 @@ const WebcamCapture: React.FC = () => {
       }),
     ]);
 
-    return () => { 
-      unlistenPromises.then(unlisteners => unlisteners.forEach(unlisten => unlisten()));
+    return () => {
+      unlistenPromises.then((unlisteners) => {
+        unlisteners.forEach((unlisten) => {
+          unlisten();
+        });
+      });
     };
   }, []);
 
@@ -182,7 +254,24 @@ const WebcamCapture: React.FC = () => {
   }, [isWebcamReady, isModelInitialized, initializeModel]);
 
   const onUserMedia = useCallback(() => setIsWebcamReady(true), []);
-  const onUserMediaError = useCallback(() => setError(t('webcam.permissionError', '웹캠에 접근할 수 없습니다.')), [t]);
+  const onUserMediaError = useCallback(async () => {
+    try {
+      const os = await platform();
+      if (os === 'linux') {
+        setError(
+          t(
+            'webcam.permissionErrorLinux',
+            'Failed to access the webcam on Linux. Make sure no other app is using the camera and re-select the camera in Settings.'
+          )
+        );
+        return;
+      }
+    } catch (platformError) {
+      console.error('플랫폼 확인 실패:', platformError);
+    }
+
+    setError(t('webcam.permissionError', '웹캠에 접근할 수 없습니다.'));
+  }, [t]);
 
   const getPostureStatusColor = (score?: number | null): string => {
     if (score == null) return 'ring-slate-300';
@@ -237,8 +326,8 @@ const WebcamCapture: React.FC = () => {
                       <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
                         <h4 className="font-semibold text-sm mb-2 flex items-center gap-2 text-blue-800 dark:text-blue-200"><Lightbulb className="h-4 w-4"/>{t('dashboard.tipsTitle', '개선 팁')}</h4>
                         <ul className="space-y-1 text-xs text-blue-700 dark:text-blue-300 list-disc list-inside">
-                          {analysisResult.recommendations.map((rec, i) => (
-                            <li key={i}>
+                          {analysisResult.recommendations.map((rec) => (
+                            <li key={rec}>
                               {t(
                                 // dotted key (e.g. "motivation.excellent") => dashboard.<dotted>
                                 rec.includes('.') ? `dashboard.${rec}` : `dashboard.tips.${rec}`
@@ -315,12 +404,16 @@ const WebcamCapture: React.FC = () => {
               {calibratedImage && (
                 <div className="mt-4">
                   <p className="text-xs font-semibold mb-2 text-muted-foreground">{t('webcam.savedPosture', '저장된 자세:')}</p>
-                  <div className="relative w-28 h-auto aspect-[4/3] rounded-lg overflow-hidden cursor-pointer group border-2 border-border" onClick={() => setIsPreviewOpen(true)}>
+                  <button
+                    type="button"
+                    className="relative w-28 h-auto aspect-[4/3] rounded-lg overflow-hidden cursor-pointer group border-2 border-border"
+                    onClick={() => setIsPreviewOpen(true)}
+                  >
                     <img src={calibratedImage} alt={t('webcam.calibratedThumbnail', 'Calibrated posture thumbnail')} className="w-full h-full object-cover" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
                       <ZoomIn className="h-8 w-8 text-white" />
                     </div>
-                  </div>
+                  </button>
                 </div>
               )}
             </CardContent>

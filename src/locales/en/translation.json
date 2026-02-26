@@ -148,6 +148,7 @@
     "notificationErrorOpen": "Error opening notification settings window:",
     "cameraPermissionManual": "Unable to open settings window. Please manually go to System Settings > Privacy & Security > Camera to check permissions.",
     "cameraPermissionDirect": "Please allow app permissions directly in System Settings > Privacy & Security > Camera.",
+    "cameraPermissionLinux": "Linux may not provide a direct camera permission window for this app. Close other apps using the webcam, restart Pose Nudge, and re-select the camera. If you use Flatpak or Snap, also verify portal/sandbox camera permissions.",
     "appRestartManual": "Please restart the app manually.",
     "notificationPermissionManual": "Please allow app permissions directly in System Settings > Notifications.",
     "notificationPermissionDirect": "Unable to open settings window. Please manually go to System Settings > Notifications to check permissions."
@@ -162,6 +163,7 @@
     "calibrationNotReady": "Model, webcam, or storage is not ready.",
     "calibrationError": "Calibration failed: {{error}}",
     "permissionError": "Cannot access webcam. Please check camera permissions.",
+    "permissionErrorLinux": "Failed to access the webcam on Linux. Make sure no other app is using the camera and re-select the camera in Settings.",
     "currentScore": "Current Posture Score",
     "analyzing": "Analyzing...",
     "realtimeStatus": "Realtime Analysis Status",

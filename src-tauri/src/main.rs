@@ -22,7 +22,7 @@ use tauri::{
   Runtime,
   State, // ✨ 제네릭을 위해 Runtime 트레이트 import
 };
-use tauri_plugin_notification::{Notification, NotificationExt};
+use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 
 use image::{ImageBuffer, Rgb};
@@ -49,7 +49,7 @@ impl Translations {
     // ✨ 수정: 함수를 제네릭으로 만들어 어떤 Runtime에서도 동작하게 함
     pub fn new<R: Runtime>(path_resolver: &PathResolver<R>) -> Self {
         let mut data = HashMap::new();
-        let locales = vec!["en", "ko", "ja", "zh"]; // 지원하는 언어 목록
+        let locales = vec!["en", "ko", "ja", "zh", "tr"];
 
         for lang in locales {
             if let Ok(resource_path) =
@@ -89,6 +89,21 @@ impl Translations {
     }
 }
 
+fn normalize_language_code(lang: &str) -> String {
+    let normalized = lang.to_ascii_lowercase();
+    if normalized.starts_with("ko") {
+        "ko".to_string()
+    } else if normalized.starts_with("ja") {
+        "ja".to_string()
+    } else if normalized.starts_with("zh") {
+        "zh".to_string()
+    } else if normalized.starts_with("tr") {
+        "tr".to_string()
+    } else {
+        "en".to_string()
+    }
+}
+
 // --- App State ---
 #[derive(serde::Serialize, Clone)]
 struct CameraDetail {
@@ -109,6 +124,48 @@ struct AppState {
     current_language: Arc<Mutex<String>>,
     battery_saving_mode: Arc<Mutex<bool>>,
     tray: Arc<Mutex<Option<TrayIcon>>>,
+}
+
+fn ensure_continuous_camera_stream(state: &AppState) -> bool {
+    let mut cam_lock = state.camera.lock().unwrap();
+
+    if let Some(cam) = cam_lock.as_mut() {
+        if cam.is_stream_open() {
+            return true;
+        }
+
+        match cam.open_stream() {
+            Ok(_) => {
+                info!("기존 카메라 스트림 재시작 성공");
+                return true;
+            }
+            Err(e) => {
+                error!("기존 카메라 스트림 재시작 실패: {}", e);
+                *cam_lock = None;
+            }
+        }
+    }
+
+    let index = *state.selected_camera_index.lock().unwrap();
+    let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+
+    match Camera::new(CameraIndex::Index(index), requested) {
+        Ok(mut cam) => match cam.open_stream() {
+            Ok(_) => {
+                info!("일반 모드용 카메라 스트림 시작 성공 (index={})", index);
+                *cam_lock = Some(cam);
+                true
+            }
+            Err(e) => {
+                error!("일반 모드용 카메라 스트림 시작 실패 (index={}): {}", index, e);
+                false
+            }
+        },
+        Err(e) => {
+            error!("일반 모드용 카메라 초기화 실패 (index={}): {}", index, e);
+            false
+        }
+    }
 }
 
 // --- Tauri Commands ---
@@ -272,7 +329,18 @@ async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
         }
         Err(e) => {
             error!("카메라 목록 조회 실패: {}", e);
-            Err(e.to_string())
+            #[cfg(target_os = "linux")]
+            {
+                return Err(format!(
+                    "카메라 목록 조회 실패: {}. Linux에서는 다른 앱의 카메라 점유 또는 런타임 포털/샌드박스 권한 문제일 수 있습니다.",
+                    e
+                ));
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                Err(e.to_string())
+            }
         }
     }
 }
@@ -366,23 +434,8 @@ async fn set_battery_saving_mode(state: State<'_, AppState>, mode: bool) -> Resu
     } else {
         // 일반 모드: 모니터링 중이면 카메라 열기
         if *state.monitoring_active.lock().unwrap() {
-            let mut cam_lock = state.camera.lock().unwrap();
-            if cam_lock.is_none() {
-                let index = *state.selected_camera_index.lock().unwrap();
-                let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-                match Camera::new(CameraIndex::Index(index), requested) {
-                    Ok(mut cam) => {
-                        if let Err(e) = cam.open_stream() {
-                            error!("일반 모드 전환 시 카메라 스트림 열기 실패: {}", e);
-                        } else {
-                            info!("일반 모드 전환 시 카메라 스트림 열음.");
-                            *cam_lock = Some(cam);
-                        }
-                    }
-                    Err(e) => {
-                        error!("일반 모드 전환 시 카메라 초기화 실패: {}", e);
-                    }
-                }
+            if !ensure_continuous_camera_stream(&state) {
+                warn!("일반 모드 전환 시 카메라 준비 실패. 다음 주기에서 재시도합니다.");
             }
         }
     }
@@ -391,8 +444,9 @@ async fn set_battery_saving_mode(state: State<'_, AppState>, mode: bool) -> Resu
 
 #[tauri::command]
 async fn set_current_language(state: State<'_, AppState>, lang: String) -> Result<(), String> {
-    info!("현재 언어 변경: {}", lang);
-    *state.current_language.lock().unwrap() = lang;
+    let normalized = normalize_language_code(&lang);
+    info!("현재 언어 변경: {} -> {}", lang, normalized);
+    *state.current_language.lock().unwrap() = normalized;
     Ok(())
 }
 
@@ -402,8 +456,6 @@ async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
     // 현재 실행 파일 경로 가져오기
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_dir = exe_path.parent().unwrap_or(&exe_path);
-        let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy();
-
         // 새 프로세스로 앱 재시작
         let _ = std::process::Command::new(&exe_path)
             .current_dir(exe_dir)
@@ -456,16 +508,25 @@ async fn background_alert_task(app_handle: AppHandle, state: AppState) {
 }
 
 async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
+    let mut last_analysis_time = Instant::now() - Duration::from_secs(3);
+
     loop {
-        let interval_duration = {
-            let secs = *state.monitoring_interval_secs.lock().unwrap();
-            Duration::from_secs(secs)
-        };
-        sleep(interval_duration).await;
+        sleep(Duration::from_secs(1)).await;
 
         if !*state.monitoring_active.lock().unwrap() {
             continue;
         }
+
+        let interval_duration = {
+            let secs = *state.monitoring_interval_secs.lock().unwrap();
+            Duration::from_secs(secs.max(1))
+        };
+
+        if last_analysis_time.elapsed() < interval_duration {
+            continue;
+        }
+
+        last_analysis_time = Instant::now();
 
         let battery_saving = *state.battery_saving_mode.lock().unwrap();
         let selected_index = *state.selected_camera_index.lock().unwrap();
@@ -508,6 +569,11 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
             }
         } else {
             // 일반 모드: 기존 로직
+            if !ensure_continuous_camera_stream(&state) {
+                warn!("일반 모드 카메라 준비 실패. 다음 주기에서 재시도합니다.");
+                continue;
+            }
+
             let mut cam_lock = state.camera.lock().unwrap();
             if let Some(cam) = cam_lock.as_mut() {
                 if cam.is_stream_open() {
@@ -606,6 +672,14 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
 // --- Main Application Setup ---
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            info!("Set WEBKIT_DISABLE_DMABUF_RENDERER=1 for Linux runtime compatibility");
+        }
+    }
+
     run();
 }
 
@@ -666,7 +740,7 @@ pub fn run() {
                 selected_camera_index: Arc::new(Mutex::new(0)),
                 monitoring_interval_secs: Arc::new(Mutex::new(3)),
                 translations: translations,
-                current_language: Arc::new(Mutex::new("ko".to_string())),
+                current_language: Arc::new(Mutex::new("en".to_string())),
                 battery_saving_mode: Arc::new(Mutex::new(false)),
                 tray: Arc::new(Mutex::new(None)),
             };

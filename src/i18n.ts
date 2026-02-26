@@ -9,6 +9,9 @@ import translationJA from './locales/ja/translation.json';
 import translationZH from './locales/zh/translation.json';
 import translationTR from './locales/tr/translation.json';
 
+const LANGUAGE_KEY = 'pose_nudge_language';
+const SUPPORTED_LANGUAGES = ['en', 'ko', 'ja', 'zh', 'tr'];
+
 const resources = {
   en: {
     translation: translationEN,
@@ -28,14 +31,22 @@ const resources = {
 };
 
 i18n
-  .use(LanguageDetector) // 사용자의 언어 감지
-  .use(initReactI18next) // react-i18next 초기화
+  .use(LanguageDetector)
+  .use(initReactI18next)
   .init({
     resources,
-    fallbackLng: 'en', // 기본 언어가 없을 경우 영어로 대체
-    debug: true, // 개발 중에는 true로 설정하여 디버깅 정보 확인
+    supportedLngs: SUPPORTED_LANGUAGES,
+    nonExplicitSupportedLngs: true,
+    load: 'languageOnly',
+    fallbackLng: 'en',
+    debug: false,
+    detection: {
+      order: ['localStorage', 'navigator'],
+      lookupLocalStorage: LANGUAGE_KEY,
+      caches: ['localStorage'],
+    },
     interpolation: {
-      escapeValue: false, // React는 이미 XSS 방지를 하므로 false로 설정
+      escapeValue: false,
     },
   });
 

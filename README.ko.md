@@ -70,11 +70,13 @@ Pose Nudge는 웹캠을 활용하여 실시간으로 자세를 분석하고, 거
 
 최신 버전의 Pose Nudge를 운영체제에 맞게 다운로드하세요.
 
-| Operating System | File Format | Download Link |
+| Operating System | Install Files | Download Link |
 | :---: | :---: | :---: |
-| 💻 **Windows** | `.exe` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
-| 🍏 **macOS** | `.dmg` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
-| 🐧 **Linux** | `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 💻 **Windows** | `.msi`, `.exe (NSIS)` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 🍏 **macOS** | `.dmg` (Apple Silicon / Intel) | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+| 🐧 **Linux** | `.deb`, `.rpm`, `.AppImage` | <a href="https://github.com/dduldduck/pose-nudge/releases/latest"><img src="https://img.shields.io/badge/Latest_Release-Download-brightgreen?style=flat-square" /></a> |
+
+Linux에서 AppImage 실행 시 그래픽 초기화 문제가 있으면 `WEBKIT_DISABLE_DMABUF_RENDERER=1 ./Pose.Nudge*.AppImage`로 실행하거나 `.deb`/`.rpm` 패키지를 사용하세요.
 
 ---
 
@@ -101,6 +103,12 @@ npm install
 # 3. Run in development mode
 npm run tauri dev
 ```
+
+### 릴리즈 프로세스 (자동화)
+
+- `main` 브랜치의 Conventional Commit을 기반으로 `release-please`가 릴리즈 PR을 생성/갱신합니다.
+- 릴리즈 PR 머지 시 `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` 버전과 `CHANGELOG.md`가 자동 갱신됩니다.
+- GitHub Release가 발행되면 `.github/workflows/release.yml`에서 Windows/macOS/Linux 설치 파일을 빌드해 릴리즈에 업로드합니다.
 
 ### Project Structure
 ```
