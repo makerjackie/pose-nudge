@@ -7,6 +7,14 @@ All notable changes to **Pose Nudge** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.5.0...pose-nudge-v1.5.1) (2026-02-27)
+
+
+### Bug Fixes
+
+* harden monitoring camera flow and dashboard metrics ([f416f07](https://github.com/DDULDDUCK/pose-nudge/commit/f416f075b752b1591cf3fea9f34929d9fe058202))
+* harden monitoring camera flow and dashboard metrics ([a3ae4b7](https://github.com/DDULDDUCK/pose-nudge/commit/a3ae4b7e1ab6797d7abace60b958f9e0bdfb90c6))
+
 ## [1.5.0](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.4.0...pose-nudge-v1.5.0) (2026-02-26)
 
 
