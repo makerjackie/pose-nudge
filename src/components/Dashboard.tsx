@@ -1,6 +1,6 @@
 // src/components/Dashboard.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { getDb } from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -10,7 +10,6 @@ import { Progress } from '@/components/ui/progress';
 import { Activity, Bell, Clock, Target, AlertCircle, CheckCircle, RefreshCw, Sparkles, LineChart } from 'lucide-react';
 import { ResponsiveContainer, LineChart as RechartsLineChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line } from 'recharts';
 import { useTranslation } from 'react-i18next';
-// 컴포넌트 내부에서 사용할 타입 정의
 interface DashboardStats {
   total_sessions: number;
   average_posture_score: number;
@@ -19,12 +18,21 @@ interface DashboardStats {
   good_posture_time: number;
 }
 
+const MONITORING_INTERVAL_KEY = 'pose_nudge_monitoring_interval';
+const BATTERY_SAVING_MODE_KEY = 'pose_nudge_battery_saving_mode';
+
+const resolveSecondsPerRecord = (): number => {
+  const intervalRaw = Number.parseInt(localStorage.getItem(MONITORING_INTERVAL_KEY) || '3', 10);
+  const safeInterval = Number.isFinite(intervalRaw) && intervalRaw > 0 ? intervalRaw : 3;
+  const batterySavingMode = localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true';
+  return safeInterval * (batterySavingMode ? 60 : 1);
+};
+
 interface DailyScore {
   name: string;
   score: number;
 }
 
-// StatCard 컴포넌트
 const StatCard: React.FC<{ icon: React.ReactNode; title: string; value: string | number; description: string; }> = ({ icon, title, value, description }) => (
   <Card>
     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -53,11 +61,7 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>('');
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
@@ -90,24 +94,29 @@ const Dashboard: React.FC = () => {
       ]);
 
       const rawStats = statsResult[0] || {};
+      const secondsPerRecord = resolveSecondsPerRecord();
+
       setStats({
           total_sessions: rawStats.total_sessions || 0,
           average_posture_score: Math.round(rawStats.average_posture_score || 0),
           detection_count_today: rawStats.detection_count_today || 0,
-          session_time: Math.floor(((rawStats.records_today || 0) * 3) / 60),
-          good_posture_time: Math.floor(((rawStats.good_records_today || 0) * 3) / 60)
+          session_time: Math.floor(((rawStats.records_today || 0) * secondsPerRecord) / 60),
+          good_posture_time: Math.floor(((rawStats.good_records_today || 0) * secondsPerRecord) / 60)
       });
 
       setChartData(chartResult);
-      // setRecommendations(recs); // 더 이상 백엔드에서 받아오지 않음
 
     } catch (err) {
-      console.error('대시보드 데이터 로드 실패:', err);
+      console.error('Failed to load dashboard data:', err);
       setError(t('dashboard.loadingError'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [t]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
 
   const formatTime = (minutes: number): string => {
     if (minutes < 60) return t('dashboard.timeFormat.minutes', { count: minutes });
@@ -144,7 +153,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 컨트롤 버튼 */}
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={loadDashboardData} className="gap-2">
           <RefreshCw className="h-4 w-4" />
@@ -159,10 +167,8 @@ const Dashboard: React.FC = () => {
         </Alert>
       )}
 
-      {/* 메인 그리드 */}
       {stats ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 왼쪽: 메인 점수 및 추천 */}
           <div className="lg:col-span-1 space-y-6">
             <Card className="shadow-lg">
               <CardHeader>
@@ -174,6 +180,7 @@ const Dashboard: React.FC = () => {
               <CardContent className="flex flex-col items-center justify-center space-y-4">
                 <div className="relative h-48 w-48">
                   <svg className="h-full w-full" viewBox="0 0 100 100">
+                    <title>{t('dashboard.scoreTitle')}</title>
                     <circle className="stroke-current text-muted" strokeWidth="10" cx="50" cy="50" r="40" fill="transparent"></circle>
                     <circle
                       className={`stroke-current ${getScoreRingColor(stats.average_posture_score)} transition-all duration-500`}
@@ -201,8 +208,8 @@ const Dashboard: React.FC = () => {
               <CardContent>
                 {recommendations.length > 0 ? (
                   <ul className="space-y-3">
-                    {recommendations.map((rec, index) => (
-                      <li key={index} className="flex items-start gap-3">
+                    {recommendations.map((rec) => (
+                      <li key={rec} className="flex items-start gap-3">
                         <CheckCircle className="h-5 w-5 text-emerald-500 mt-0.5 flex-shrink-0" />
                         <span className="text-sm text-muted-foreground">{t(`dashboard.tips.${rec}`, rec)}</span>
                       </li>
@@ -215,7 +222,6 @@ const Dashboard: React.FC = () => {
             </Card>
           </div>
 
-          {/* 오른쪽: 상세 통계 */}
           <div className="lg:col-span-2 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
               <StatCard icon={<Activity />} title={t('dashboard.stats.totalSessions')} value={stats.total_sessions} description={t('dashboard.stats.totalSessionsDesc')} />

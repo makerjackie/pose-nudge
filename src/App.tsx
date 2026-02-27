@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Dashboard from '@/components/Dashboard';
 import WebcamCapture from '@/components/WebcamCapture';
-import SettingsPage from '@/components/SettingsPage'; // 새로 만든 설정 페이지 가져오기
+import SettingsPage from '@/components/SettingsPage';
 import {
   LayoutDashboard,
   Camera,
@@ -29,9 +29,6 @@ const normalizeLanguage = (lang: string | undefined): string => {
   if (lowered.startsWith('tr')) return 'tr';
   return 'en';
 };
-// --- 페이지 컴포넌트 정의 ---
-
-// 정보 페이지 컴포넌트
 const AboutPage = () => {
   const { t } = useTranslation();
   const [currentVersion, setCurrentVersion] = useState<string>(t('about.loading', '로딩 중...'));
@@ -44,7 +41,7 @@ const AboutPage = () => {
         const version = await getVersion();
         setCurrentVersion(version);
       } catch (error) {
-        console.error('버전 가져오기 실패:', error);
+        console.error('Failed to fetch app version:', error);
         setCurrentVersion(t('about.unknown', '알 수 없음'));
       }
     };
@@ -62,7 +59,7 @@ const AboutPage = () => {
         setUpdateStatus(t('about.upToDate', '현재 최신 버전입니다.'));
       }
     } catch (error) {
-      console.error('업데이트 확인 실패:', error);
+      console.error('Failed to check updates:', error);
       setUpdateStatus(t('about.updateFailed', '업데이트 확인 실패'));
     } finally {
       setCheckingUpdate(false);
@@ -128,7 +125,6 @@ const AboutPage = () => {
 };
 
 
-// --- 네비게이션 아이템 타입 정의 ---
 type NavItem = {
   id: string;
   label: string;
@@ -171,7 +167,6 @@ function App() {
     };
   }, []);
 
-  // 앱 시작 시 설정 동기화
   useEffect(() => {
     const batterySavingMode = localStorage.getItem('pose_nudge_battery_saving_mode') === 'true';
     invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
@@ -199,7 +194,6 @@ function App() {
 
   return (
       <div className="flex h-screen bg-background text-foreground">
-      {/* 사이드바 */}
       <aside className="w-64 flex-shrink-0 bg-card border-r border-border flex flex-col">
         <div className="h-16 flex items-center justify-center px-6 border-b">
           <div className="flex items-center gap-3">
@@ -232,7 +226,6 @@ function App() {
         </div>
       </aside>
 
-      {/* 메인 컨텐츠 */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-16 bg-card border-b border-border flex items-center px-8">
           <h2 className="text-2xl font-bold">{activeLabel}</h2>

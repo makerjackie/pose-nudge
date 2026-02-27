@@ -25,7 +25,6 @@ import {
 } from 'lucide-react';
 //import { getDb } from '@/lib/db';
 
-// --- 인터페이스 정의 ---
 interface PostureAnalysis {
   turtle_neck: boolean;
   shoulder_misalignment: boolean;
@@ -41,12 +40,13 @@ interface MonitoringStatus {
 const CAMERA_INDEX_KEY = 'pose_nudge_camera_index';
 const CAMERA_NAME_KEY = 'pose_nudge_camera_name';
 const LEGACY_CAMERA_DEVICE_KEY = 'pose_nudge_camera';
-const BATTERY_SAVING_MODE_KEY = 'pose_nudge_battery_saving_mode';
 
 const normalizeCameraName = (value: string): string =>
   value.toLowerCase().replace(/\s+/g, ' ').trim();
 
-// --- 상태 표시 UI 컴포넌트 ---
+const isValidPreviewFramePayload = (payload: string): boolean =>
+  payload.startsWith('data:image/') && payload.includes('base64,') && payload.length > 'data:image/jpeg;base64,'.length;
+
 const StatusItem: React.FC<{ label: string; isBad: boolean; detectedText?: string; }> = ({ label, isBad, detectedText }) => {
   const { t } = useTranslation();
   return (
@@ -74,21 +74,17 @@ const WebcamCapture: React.FC = () => {
   const [isWebcamReady, setIsWebcamReady] = useState(false);
   const [isModelInitialized, setIsModelInitialized] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<PostureAnalysis | null>(null);
-  const [error, setError] = useState<string>(''); // setError는 유지하되, 사용처가 줄어듭니다.
+  const [error, setError] = useState<string>('');
   const [initializationProgress, setInitializationProgress] = useState<string>('');
   const [calibrationStatus, setCalibrationStatus] = useState<'idle' | 'calibrating' | 'success' | 'error'>('idle');
   const [calibratedImage, setCalibratedImage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
   const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
-  const [batterySavingMode, setBatterySavingMode] = useState(
-    () => localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true'
-  );
   const [backendPreviewFrame, setBackendPreviewFrame] = useState<string | null>(null);
   const [useBackendPreview, setUseBackendPreview] = useState(false);
   const shouldUseBackendPreview = useBackendPreview || (
     isMonitoring
-    && batterySavingMode
     && currentPlatform === 'windows'
   );
 
@@ -162,7 +158,7 @@ const WebcamCapture: React.FC = () => {
         if (!cancelled) {
           setSelectedDeviceId(undefined);
         }
-        console.error('카메라 장치 조회 실패:', deviceError);
+        console.error('Failed to enumerate camera devices:', deviceError);
       }
     };
 
@@ -188,19 +184,12 @@ const WebcamCapture: React.FC = () => {
       setIsModelInitialized(true);
       setInitializationProgress('');
     } catch (err) {
-      // toast로 에러를 띄우는 것이 더 좋을 수 있습니다.
       console.error(err);
       setError(t('webcam.initModelError', 'AI 모델 초기화에 실패했습니다.'));
       setInitializationProgress('');
     }
   }, [isModelInitialized, t]);
   
-  // ★★★★★ 제거: 프론트엔드의 주기적인 캡처 및 분석 관련 함수들은 모두 삭제합니다. ★★★★★
-  // const captureAndAnalyze = useCallback(...);
-  // const startMonitoring = useCallback(...);
-  // const stopMonitoring = useCallback(...);
-
-  // 캘리브레이션은 브라우저 웹캠 또는 백엔드 프리뷰 프레임을 사용합니다.
   const handleCalibrate = useCallback(async () => {
     const hasCaptureSource = Boolean(webcamRef.current) || Boolean(shouldUseBackendPreview && backendPreviewFrame);
     if (!hasCaptureSource || !isModelInitialized || !store) {
@@ -235,26 +224,10 @@ const WebcamCapture: React.FC = () => {
   }, [backendPreviewFrame, isModelInitialized, shouldUseBackendPreview, store, t]);
 
   useEffect(() => {
-    const syncBatterySavingMode = () => {
-      setBatterySavingMode(localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true');
-    };
-
-    syncBatterySavingMode();
-
-    window.addEventListener('focus', syncBatterySavingMode);
-    document.addEventListener('visibilitychange', syncBatterySavingMode);
-
-    return () => {
-      window.removeEventListener('focus', syncBatterySavingMode);
-      document.removeEventListener('visibilitychange', syncBatterySavingMode);
-    };
-  }, []);
-
-  useEffect(() => {
     try {
       setCurrentPlatform(platform());
     } catch (platformError) {
-      console.error('플랫폼 확인 실패:', platformError);
+      console.error('Failed to resolve platform:', platformError);
     }
   }, []);
 
@@ -263,8 +236,6 @@ const WebcamCapture: React.FC = () => {
       try {
         const storeInstance = await load('.settings.dat');
         setStore(storeInstance);
-
-        setBatterySavingMode(localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true');
 
         const savedImagePath = await storeInstance.get<string>('calibratedImagePath');
         if (savedImagePath) {
@@ -278,22 +249,17 @@ const WebcamCapture: React.FC = () => {
           setAnalysisResult(null);
         }
       } catch (err) {
-        console.error('초기 데이터 로드 실패:', err);
+        console.error('Failed to load initial webcam state:', err);
       }
     };
     loadInitialData();
 
-    // 백엔드 이벤트 리스너 설정
     const unlistenPromises = Promise.all([
       listen<string>('posture-alert', (event) => {
         window.dispatchEvent(new CustomEvent('pose-nudge-toast', { detail: event.payload }));
       }),
-      // ★★★★★ 추가: 시스템 트레이에서 상태 변경 시 UI 동기화 ★★★★★
       listen<{ active: boolean }>('monitoring-state-changed', (event) => {
         const nextActive = event.payload.active;
-        const nextBatterySavingMode = localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true';
-
-        setBatterySavingMode(nextBatterySavingMode);
         setIsMonitoring(nextActive);
 
         if (!nextActive) {
@@ -303,17 +269,16 @@ const WebcamCapture: React.FC = () => {
         }
       }),
       listen<string>('camera-preview-frame', (event) => {
-        if (!event.payload) {
+        const framePayload = event.payload?.trim();
+        if (!framePayload || !isValidPreviewFramePayload(framePayload)) {
           return;
         }
 
-        setBackendPreviewFrame(event.payload);
+        setBackendPreviewFrame(framePayload);
         setIsWebcamReady(true);
         setError('');
       }),
-      // ★★★★★ 추가: 백엔드에서 온 실시간 분석 결과를 받아 UI 업데이트 ★★★★★
       listen<PostureAnalysis>('analysis-update', (event) => {
-        // 데이터베이스 저장은 이제 백엔드에서 처리해야 합니다. 여기서는 UI 상태만 업데이트합니다.
         setAnalysisResult(event.payload);
       }),
     ]);
@@ -326,9 +291,6 @@ const WebcamCapture: React.FC = () => {
       });
     };
   }, []);
-
-  // ★★★★★ 제거: 프론트엔드에서 주기적으로 분석을 호출하던 useEffect는 삭제합니다. ★★★★★
-  // useEffect(() => { ... setInterval ... }, []);
 
   useEffect(() => {
     if (isWebcamReady && !isModelInitialized) {
@@ -350,7 +312,7 @@ const WebcamCapture: React.FC = () => {
     }
 
     invoke('request_preview_frame').catch((requestError) => {
-      console.error('프리뷰 프레임 즉시 요청 실패:', requestError);
+      console.error('Failed to request immediate preview frame:', requestError);
     });
   }, [backendPreviewFrame, isMonitoring, shouldUseBackendPreview]);
 
@@ -381,7 +343,7 @@ const WebcamCapture: React.FC = () => {
         return;
       }
     } catch (platformError) {
-      console.error('플랫폼 확인 실패:', platformError);
+      console.error('Failed to resolve platform:', platformError);
     }
 
     setError(t('webcam.permissionError', '웹캠에 접근할 수 없습니다.'));
@@ -399,7 +361,6 @@ const WebcamCapture: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 왼쪽: 웹캠 및 분석 결과 */}
         <div className="lg:col-span-2 space-y-6">
           <Card className="overflow-hidden">
             <div className={`relative group`}>
@@ -477,12 +438,10 @@ const WebcamCapture: React.FC = () => {
           </Card>
         </div>
 
-        {/* 오른쪽: 컨트롤 패널 */}
         <div className="lg-col-span-1 space-y-6">
           <Card>
             <CardHeader><CardTitle>{t('webcam.controlPanel', '컨트롤 패널')}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              {/* ★★★★★ 변경: 시작/중지 버튼을 상태 표시 UI로 대체 ★★★★★ */}
               <div className={`w-full p-4 rounded-lg text-center font-semibold ${isMonitoring ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-muted text-muted-foreground'}`}>
                 {isMonitoring ? (
                   <div className="flex items-center justify-center gap-2">
@@ -505,7 +464,6 @@ const WebcamCapture: React.FC = () => {
                 <span className={`flex items-center gap-1.5 ${isModelInitialized ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}><Cpu className="h-4 w-4"/>{t('webcam.aiModel', 'AI 모델')} {isModelInitialized ? 'ON' : 'OFF'}</span>
               </div>
             </CardContent>
-            {/* 에러 및 초기화 진행 상태 표시 */}
             {(error || initializationProgress) && (
               <div className="mt-2 space-y-1">
                 {error && (
