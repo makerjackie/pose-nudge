@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -37,15 +37,12 @@ const LanguageSettings = () => {
     const { i18n, t } = useTranslation();
     const [lang, setLang] = useState(() => localStorage.getItem(LANGUAGE_KEY) || i18n.language || 'ko');
 
-    // 앱 시작 시(컴포넌트 마운트 시) 백엔드에 현재 언어 동기화
     useEffect(() => {
-        // 1. 우선순위에 따라 초기 언어를 결정합니다.
         const initialLang =
-            localStorage.getItem(LANGUAGE_KEY) || // 1순위: 사용자가 직접 저장한 설정
-            i18n.language ||                     // 2순위: LanguageDetector가 감지한 시스템 언어
-            'en';                                // 3순위: 모든 것이 실패했을 때의 최종 기본값
+            localStorage.getItem(LANGUAGE_KEY) ||
+            i18n.language ||
+            'en';
 
-        // 2. 결정된 언어로 앱의 상태를 일관되게 업데이트합니다.
         if (initialLang !== i18n.language) {
             i18n.changeLanguage(initialLang);
         }
@@ -55,12 +52,10 @@ const LanguageSettings = () => {
 
     }, [i18n]);
 
-    // 언어 변경 핸들러
     const handleChange = (value: string) => {
         i18n.changeLanguage(value);
         setLang(value);
         localStorage.setItem(LANGUAGE_KEY, value);
-        // 언어가 변경될 때마다 백엔드에 알림
         invoke('set_current_language', { lang: value }).catch(console.error);
     };
 
@@ -96,7 +91,6 @@ const DetectionSettings = () => {
     const [monitoringInterval, setMonitoringInterval] = useState<string>(() => localStorage.getItem(MONITORING_INTERVAL_KEY) || '3');
 
     useEffect(() => {
-        // 앱 시작 시 백엔드에 절약 모드 상태 동기화
         invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
     }, [batterySavingMode]);
 
@@ -226,7 +220,7 @@ const CameraSettings = () => {
         () => localStorage.getItem(CAMERA_INDEX_KEY) || '0'
     );
 
-    const syncPreviewCameraDevice = async (cameraName: string, fallbackIndex: number) => {
+    const syncPreviewCameraDevice = useCallback(async (cameraName: string, fallbackIndex: number) => {
         if (!navigator.mediaDevices?.enumerateDevices) {
             return;
         }
@@ -261,9 +255,9 @@ const CameraSettings = () => {
                 localStorage.setItem(LEGACY_CAMERA_DEVICE_KEY, resolvedDeviceId);
             }
         } catch (error) {
-            console.error('프리뷰 카메라 동기화 실패:', error);
+            console.error('Failed to sync preview camera device:', error);
         }
-    };
+    }, []);
 
     useEffect(() => {
         const getCamerasFromBackend = async () => {
@@ -289,12 +283,12 @@ const CameraSettings = () => {
                 }
 
             } catch (error) {
-                console.error(t('settings.cameraErrorGetList', '백엔드로부터 카메라 목록을 가져오는 중 오류 발생:'), error);
+                console.error(t('settings.cameraErrorGetList', 'Failed to fetch camera list from backend:'), error);
             }
         };
 
         getCamerasFromBackend();
-    }, [t]);
+    }, [syncPreviewCameraDevice, t]);
 
     const handleCameraChange = (value: string) => {
         const newIndex = parseInt(value, 10);
@@ -308,7 +302,7 @@ const CameraSettings = () => {
         }
 
         invoke('set_selected_camera', { index: newIndex })
-            .catch(e => console.error(t('settings.cameraErrorSetSelected', '선택된 카메라를 백엔드에 설정하는 중 오류 발생:'), e));
+            .catch(e => console.error(t('settings.cameraErrorSetSelected', 'Failed to set selected camera in backend:'), e));
     };
 
     const openCameraSettings = async () => {
@@ -329,7 +323,7 @@ const CameraSettings = () => {
                 alert(t('settings.cameraPermissionDirect', '시스템 설정 > 개인 정보 보호 및 보안 > 카메라에서 앱 권한을 직접 허용해주세요.'));
             }
         } catch (error) {
-            console.error(t('settings.settingsErrorOpen', '설정 창을 여는 중 오류 발생:'), error);
+            console.error(t('settings.settingsErrorOpen', 'Failed to open settings window:'), error);
             alert(t('settings.cameraPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 개인 정보 보호 및 보안 > 카메라로 이동하여 권한을 확인해주세요.'));
         }
     };
@@ -391,7 +385,6 @@ const UpdateSettings = () => {
                 setIsChecking(false);
                 setIsDownloading(true);
 
-                // 업데이트 다운로드 및 설치
                 let downloaded = 0;
                 let contentLength = 0;
 
@@ -424,7 +417,7 @@ const UpdateSettings = () => {
                 setIsChecking(false);
             }
         } catch (error) {
-            console.error(t('settings.updateErrorCheck', '업데이트 확인 실패:'), error);
+            console.error(t('settings.updateErrorCheck', 'Update check failed:'), error);
             setIsChecking(false);
             setIsDownloading(false);
             setIsInstalling(false);
@@ -435,7 +428,7 @@ const UpdateSettings = () => {
         try {
             await invoke('restart_app');
         } catch (error) {
-            console.error(t('settings.appErrorRestart', '앱 재시작 실패:'), error);
+            console.error(t('settings.appErrorRestart', 'Failed to restart app:'), error);
             alert(t('settings.appRestartManual', '앱을 수동으로 재시작해주세요.'));
         }
     };
@@ -538,7 +531,7 @@ const NotificationSettings = () => {
                 alert(t('settings.notificationPermissionDirect', '시스템 설정 > 알림에서 앱의 알림 권한을 직접 허용해주세요.'));
             }
         } catch (error) {
-            console.error(t('settings.notificationErrorOpen', '알림 설정 창을 여는 중 오류 발생:'), error);
+            console.error(t('settings.notificationErrorOpen', 'Failed to open notification settings:'), error);
             alert(t('settings.notificationPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 알림으로 이동하여 권한을 확인해주세요.'));
         }
     };

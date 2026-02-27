@@ -2,7 +2,6 @@ import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 
-// 나중에 생성할 언어 파일들을 import 합니다.
 import translationEN from './locales/en/translation.json';
 import translationKO from './locales/ko/translation.json';
 import translationJA from './locales/ja/translation.json';

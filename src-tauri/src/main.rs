@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
   image::Image,
@@ -20,7 +20,7 @@ use tauri::{
   Emitter,
   Manager,
   Runtime,
-  State, // ✨ 제네릭을 위해 Runtime 트레이트 import
+  State,
 };
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
@@ -29,7 +29,6 @@ use image::{codecs::jpeg::JpegEncoder, ImageBuffer, Rgb};
 use nokhwa::{
     pixel_format::RgbFormat,
     utils::{ApiBackend, CameraIndex, CameraInfo, RequestedFormat, RequestedFormatType},
-    // Buffer, // ✨ 수정: 사용하지 않는 import 제거
     Camera,
 };
 
@@ -40,13 +39,11 @@ use tauri_plugin_sql::{DbInstances, Migration, MigrationKind};
 mod pose_analysis;
 use pose_analysis::PoseAnalyzer;
 
-// --- 번역 관리 구조체 ---
 pub struct Translations {
     data: HashMap<String, HashMap<String, String>>,
 }
 
 impl Translations {
-    // ✨ 수정: 함수를 제네릭으로 만들어 어떤 Runtime에서도 동작하게 함
     pub fn new<R: Runtime>(path_resolver: &PathResolver<R>) -> Self {
         let mut data = HashMap::new();
         let locales = vec!["en", "ko", "ja", "zh", "tr"];
@@ -60,15 +57,15 @@ impl Translations {
                     {
                         data.insert(lang.to_string(), map);
 
-                        info!("'{}' 언어 번역 파일 로드 성공.", lang);
+                        info!("Loaded translation file for '{}'.", lang);
                     } else {
-                        error!("'{}' 언어 번역 파일 파싱 실패: {:?}", lang, resource_path);
+                        error!("Failed to parse translation file for '{}': {:?}", lang, resource_path);
                     }
                 } else {
-                    error!("'{}' 언어 번역 파일 읽기 실패: {:?}", lang, resource_path);
+                    error!("Failed to read translation file for '{}': {:?}", lang, resource_path);
                 }
             } else {
-                error!("'{}' 언어 리소스 경로를 찾을 수 없습니다.", lang);
+                error!("Translation resource path not found for '{}'.", lang);
             }
         }
         Self { data }
@@ -128,7 +125,7 @@ struct AppState {
 }
 
 fn ensure_continuous_camera_stream(state: &AppState) -> bool {
-    let mut cam_lock = state.camera.lock().unwrap();
+    let mut cam_lock = lock_or_recover(&state.camera);
 
     if let Some(cam) = cam_lock.as_mut() {
         if cam.is_stream_open() {
@@ -137,34 +134,63 @@ fn ensure_continuous_camera_stream(state: &AppState) -> bool {
 
         match cam.open_stream() {
             Ok(_) => {
-                info!("기존 카메라 스트림 재시작 성공");
+                info!("Reused and restarted existing camera stream");
                 return true;
             }
             Err(e) => {
-                error!("기존 카메라 스트림 재시작 실패: {}", e);
+                error!("Failed to restart existing camera stream: {}", e);
                 *cam_lock = None;
             }
         }
     }
 
-    let index = *state.selected_camera_index.lock().unwrap();
+    let index = *lock_or_recover(&state.selected_camera_index);
     let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
 
     match Camera::new(CameraIndex::Index(index), requested) {
         Ok(mut cam) => match cam.open_stream() {
             Ok(_) => {
-                info!("일반 모드용 카메라 스트림 시작 성공 (index={})", index);
+                info!("Started camera stream in normal mode (index={})", index);
                 *cam_lock = Some(cam);
                 true
             }
             Err(e) => {
-                error!("일반 모드용 카메라 스트림 시작 실패 (index={}): {}", index, e);
+                error!("Failed to start camera stream in normal mode (index={}): {}", index, e);
                 false
             }
         },
         Err(e) => {
-            error!("일반 모드용 카메라 초기화 실패 (index={}): {}", index, e);
+            error!("Failed to initialize camera in normal mode (index={}): {}", index, e);
             false
+        }
+    }
+}
+
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            error!("Mutex poisoned - recovering guarded state");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn stop_and_release_camera(state: &AppState, reason: &str) {
+    let camera_to_stop = {
+        let mut cam_lock = lock_or_recover(&state.camera);
+        cam_lock.take()
+    };
+
+    if let Some(mut cam) = camera_to_stop {
+        if cam.is_stream_open() {
+            if let Err(e) = cam.stop_stream() {
+                error!("{}: failed to stop camera stream: {}", reason, e);
+            } else {
+                info!("{}: camera stream stopped", reason);
+            }
+        } else {
+            info!("{}: camera handle released (stream already closed)", reason);
         }
     }
 }
@@ -178,7 +204,7 @@ async fn analyze_pose_data(
     match state.pose_analyzer.analyze_image_sync(&image_data) {
         Ok(result_str) => Ok(result_str),
         Err(e) => {
-            warn!("자세 분석 실패 (캘리브레이션): {}", e);
+            warn!("Pose analysis failed during calibration: {}", e);
             Err(e.to_string())
         }
     }
@@ -189,33 +215,33 @@ async fn initialize_pose_model(
     state: State<'_, AppState>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    info!("Pose 모델 초기화 시작");
+    info!("Initializing pose model");
     state
         .pose_analyzer
         .initialize_model(handle)
         .await
         .map_err(|e| {
-            error!("Pose 모델 초기화 실패: {}", e);
+            error!("Pose model initialization failed: {}", e);
             e.to_string()
         })
 }
 
 #[tauri::command]
 async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    *state.monitoring_active.lock().unwrap() = true;
-    *state.force_capture_now.lock().unwrap() = true;
+    *lock_or_recover(&state.monitoring_active) = true;
+    *lock_or_recover(&state.force_capture_now) = true;
 
-    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+    if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
         if let Some(default_icon) = app.default_window_icon() {
             if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
-                error!("아이콘 변경 실패: {}", e);
+                error!("Failed to update tray icon: {}", e);
             }
         } else {
-            warn!("기본 창 아이콘을 찾을 수 없습니다.");
+            warn!("Default window icon not found.");
         }
     }
     let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
-    info!("실시간 모니터링 시작");
+    info!("Real-time monitoring started");
     Ok(())
 }
 
@@ -237,27 +263,29 @@ fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Resul
 
 #[tauri::command]
 async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    *state.monitoring_active.lock().unwrap() = false;
-    *state.force_capture_now.lock().unwrap() = false;
-    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+    *lock_or_recover(&state.monitoring_active) = false;
+    *lock_or_recover(&state.force_capture_now) = false;
+    stop_and_release_camera(&state, "stop_monitoring command");
+
+    if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
         if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
             if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
                 if let Ok(monitoring_off_icon) = Image::from_bytes(&bytes) {
                     if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-                        error!("아이콘 변경 실패: {}", e);
+                error!("Failed to update tray icon: {}", e);
                     }
                 } else {
-                    error!("아이콘 생성 실패");
+                    error!("Failed to create icon image");
                 }
             } else {
-                error!("아이콘 파일 읽기 실패");
+                error!("Failed to read icon file");
             }
         } else {
-            error!("아이콘 경로 해결 실패");
+            error!("Failed to resolve icon path");
         }
     }
     let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
-    info!("실시간 모니터링 중지");
+    info!("Real-time monitoring stopped");
     Ok(())
 }
 
@@ -267,12 +295,12 @@ async fn calibrate_user_posture(
     handle: tauri::AppHandle,
     image_data: String,
 ) -> Result<(), String> {
-    info!("사용자 자세 캘리브레이션 시작");
+    info!("Starting user posture calibration");
     state
         .pose_analyzer
         .set_baseline_posture(&image_data, &handle)
         .map_err(|e| {
-            error!("자세 캘리브레이션 실패: {}", e);
+            error!("User posture calibration failed: {}", e);
             e.to_string()
         })
 }
@@ -290,7 +318,7 @@ fn get_pose_recommendations() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn get_alert_messages(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let mut alert_messages = state.alert_messages.lock().unwrap();
+    let mut alert_messages = lock_or_recover(&state.alert_messages);
     let messages = alert_messages.clone();
     alert_messages.clear();
     Ok(messages)
@@ -298,15 +326,15 @@ fn get_alert_messages(state: State<'_, AppState>) -> Result<Vec<String>, String>
 
 #[tauri::command]
 fn get_monitoring_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let monitoring_active = *state.monitoring_active.lock().unwrap();
+    let monitoring_active = *lock_or_recover(&state.monitoring_active);
     Ok(serde_json::json!({ "active": monitoring_active }))
 }
 
 #[tauri::command]
 fn request_preview_frame(state: State<'_, AppState>) -> Result<(), String> {
-    if *state.monitoring_active.lock().unwrap() {
-        *state.force_capture_now.lock().unwrap() = true;
-        info!("즉시 프리뷰 프레임 요청 수신");
+    if *lock_or_recover(&state.monitoring_active) {
+        *lock_or_recover(&state.force_capture_now) = true;
+        info!("Received immediate preview frame request");
     }
     Ok(())
 }
@@ -341,7 +369,7 @@ async fn save_calibrated_image(
     let mut file = fs::File::create(&file_path).map_err(|e| format!("파일 생성 실패: {:?}", e))?;
     file.write_all(&decoded_image)
         .map_err(|e| format!("파일 쓰기 실패: {:?}", e))?;
-    info!("캘리브레이션 이미지 덮어쓰기 완료: {:?}", file_path);
+    info!("Calibration image overwritten: {:?}", file_path);
     Ok(file_path.to_string_lossy().into_owned())
 }
 
@@ -349,7 +377,7 @@ async fn save_calibrated_image(
 async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
     match nokhwa::query(ApiBackend::Auto) {
         Ok(cameras) => {
-            info!("사용 가능한 카메라 {}개 발견", cameras.len());
+            info!("Detected {} available cameras", cameras.len());
             let camera_details = cameras
                 .into_iter()
                 .map(|cam: CameraInfo| CameraDetail {
@@ -360,7 +388,7 @@ async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
             Ok(camera_details)
         }
         Err(e) => {
-            error!("카메라 목록 조회 실패: {}", e);
+            error!("Failed to query camera list: {}", e);
             #[cfg(target_os = "linux")]
             {
                 return Err(format!(
@@ -379,39 +407,24 @@ async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
 
 #[tauri::command]
 async fn set_selected_camera(state: State<'_, AppState>, index: u32) -> Result<(), String> {
-    info!("선택된 카메라 변경: index {}", index);
-    let mut current_cam_lock = state.camera.lock().unwrap();
+    info!("Selected camera changed: index {}", index);
 
-    if *state.monitoring_active.lock().unwrap() && current_cam_lock.is_some() {
-        info!("모니터링 중 카메라 변경 시도...");
-        if let Some(mut cam) = current_cam_lock.take() {
-            if cam.is_stream_open() {
-                let _ = cam.stop_stream();
-            }
-        }
+    let monitoring_active = *lock_or_recover(&state.monitoring_active);
+    let battery_saving = *lock_or_recover(&state.battery_saving_mode);
 
-        let requested =
-            RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-        match Camera::new(CameraIndex::Index(index), requested) {
-            Ok(mut new_cam) => {
-                info!("새 카메라 초기화 성공: {}", new_cam.info().human_name());
-                if let Err(e) = new_cam.open_stream() {
-                    error!("새 카메라 스트림 시작 실패: {}", e);
-                } else {
-                    info!("새 카메라 스트림 시작됨.");
-                    *current_cam_lock = Some(new_cam);
-                }
-            }
-            Err(e) => {
-                error!("인덱스 {}번 새 카메라 초기화 실패: {}", index, e);
-            }
-        }
+    if monitoring_active {
+        stop_and_release_camera(&state, "set_selected_camera request");
     }
 
-    *state.selected_camera_index.lock().unwrap() = index;
+    *lock_or_recover(&state.selected_camera_index) = index;
 
-    if *state.monitoring_active.lock().unwrap() {
-        *state.force_capture_now.lock().unwrap() = true;
+    if monitoring_active {
+        *lock_or_recover(&state.force_capture_now) = true;
+        if battery_saving {
+            info!("Camera change applied in battery-saving mode; it will take effect on the next capture cycle.");
+        } else {
+            info!("Camera change applied in normal mode; stream will be recreated on the next monitoring loop.");
+        }
     }
 
     Ok(())
@@ -447,34 +460,22 @@ async fn set_monitoring_interval(
     } else {
         3
     };
-    info!("모니터링 주기 변경: {}초", interval_secs_final);
-    *state.monitoring_interval_secs.lock().unwrap() = interval_secs_final;
+    info!("Monitoring interval updated: {} seconds", interval_secs_final);
+    *lock_or_recover(&state.monitoring_interval_secs) = interval_secs_final;
     Ok(())
 }
 
 #[tauri::command]
 async fn set_battery_saving_mode(state: State<'_, AppState>, mode: bool) -> Result<(), String> {
-    *state.battery_saving_mode.lock().unwrap() = mode;
-    *state.force_capture_now.lock().unwrap() = true;
-    info!("배터리 절약 모드 설정: {}", mode);
+    *lock_or_recover(&state.battery_saving_mode) = mode;
+    *lock_or_recover(&state.force_capture_now) = true;
+    info!("Battery-saving mode updated: {}", mode);
 
     if mode {
-        // 절약 모드: 기존 카메라 닫기
-        if let Some(mut cam) = state.camera.lock().unwrap().take() {
-            if cam.is_stream_open() {
-                if let Err(e) = cam.stop_stream() {
-                    error!("절약 모드 전환 시 카메라 스트림 닫기 실패: {}", e);
-                } else {
-                    info!("절약 모드 전환 시 카메라 스트림 닫음.");
-                }
-            }
-        }
+        stop_and_release_camera(&state, "battery-saving mode enabled");
     } else {
-        // 일반 모드: 모니터링 중이면 카메라 열기
-        if *state.monitoring_active.lock().unwrap() {
-            if !ensure_continuous_camera_stream(&state) {
-                warn!("일반 모드 전환 시 카메라 준비 실패. 다음 주기에서 재시도합니다.");
-            }
+        if *lock_or_recover(&state.monitoring_active) {
+            info!("Switched to normal mode; camera will reconnect on the next monitoring loop.");
         }
     }
     Ok(())
@@ -483,23 +484,20 @@ async fn set_battery_saving_mode(state: State<'_, AppState>, mode: bool) -> Resu
 #[tauri::command]
 async fn set_current_language(state: State<'_, AppState>, lang: String) -> Result<(), String> {
     let normalized = normalize_language_code(&lang);
-    info!("현재 언어 변경: {} -> {}", lang, normalized);
-    *state.current_language.lock().unwrap() = normalized;
+    info!("Current language changed: {} -> {}", lang, normalized);
+    *lock_or_recover(&state.current_language) = normalized;
     Ok(())
 }
 
 #[tauri::command]
 async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
-    info!("앱 재시작 요청");
-    // 현재 실행 파일 경로 가져오기
+    info!("Application restart requested");
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_dir = exe_path.parent().unwrap_or(&exe_path);
-        // 새 프로세스로 앱 재시작
         let _ = std::process::Command::new(&exe_path)
             .current_dir(exe_dir)
             .spawn();
 
-        // 현재 앱 종료
         app.exit(0);
     } else {
         return Err("실행 파일 경로를 찾을 수 없습니다.".to_string());
@@ -514,7 +512,7 @@ async fn background_alert_task(app_handle: AppHandle, state: AppState) {
     loop {
         interval.tick().await;
         let messages_to_send = {
-            let mut alert_messages = state.alert_messages.lock().unwrap();
+            let mut alert_messages = lock_or_recover(&state.alert_messages);
             if !alert_messages.is_empty() {
                 let message = alert_messages.drain(..).collect::<Vec<_>>().join("\n");
                 Some(message)
@@ -528,9 +526,8 @@ async fn background_alert_task(app_handle: AppHandle, state: AppState) {
                 continue;
             }
 
-            info!("시스템 알림 발생: {}", &message);
+            info!("System notification triggered: {}", &message);
 
-            // ✨ 이것이 Tauri v2의 표준적인 알림 호출 방식입니다.
             let builder = app_handle.notification().builder();
             let result = builder
                 .title("🐢")
@@ -539,7 +536,7 @@ async fn background_alert_task(app_handle: AppHandle, state: AppState) {
                 .show();
 
             if let Err(e) = result {
-                error!("시스템 알림을 보내는 데 실패했습니다: {}", e);
+                error!("Failed to send system notification: {}", e);
             }
         }
     }
@@ -551,17 +548,17 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
     loop {
         sleep(Duration::from_secs(1)).await;
 
-        if !*state.monitoring_active.lock().unwrap() {
+        if !*lock_or_recover(&state.monitoring_active) {
             continue;
         }
 
         let interval_duration = {
-            let secs = *state.monitoring_interval_secs.lock().unwrap();
+            let secs = *lock_or_recover(&state.monitoring_interval_secs);
             Duration::from_secs(secs.max(1))
         };
 
         let force_capture = {
-            let mut force_capture_now = state.force_capture_now.lock().unwrap();
+            let mut force_capture_now = lock_or_recover(&state.force_capture_now);
             let should_capture = *force_capture_now;
             if should_capture {
                 *force_capture_now = false;
@@ -574,17 +571,16 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
         }
 
         if force_capture {
-            info!("강제 즉시 캡처 실행");
+            info!("Executing forced immediate capture");
         }
 
         last_analysis_time = Instant::now();
 
-        let battery_saving = *state.battery_saving_mode.lock().unwrap();
-        let selected_index = *state.selected_camera_index.lock().unwrap();
+        let battery_saving = *lock_or_recover(&state.battery_saving_mode);
+        let selected_index = *lock_or_recover(&state.selected_camera_index);
         let buffer_option = if battery_saving {
-            info!("절약 모드: 카메라 캡처 시도, 인덱스 {}", selected_index);
-            // 절약 모드: 모니터링할 때만 카메라를 켜고 끄되,
-            // Windows(MF) 자원 부족 오류를 줄이기 위해 저 FPS 형식을 우선 시도한다.
+            stop_and_release_camera(&state, "pre-capture cleanup for battery-saving mode");
+            info!("Battery-saving mode: attempting camera capture, index {}", selected_index);
             let requested_types = [
                 RequestedFormatType::HighestFrameRate(15),
                 RequestedFormatType::HighestFrameRate(10),
@@ -596,16 +592,16 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
 
             for requested_type in requested_types {
                 let requested = RequestedFormat::new::<RgbFormat>(requested_type);
-                info!("절약 모드: 포맷 시도 {:?}", requested_type);
+                info!("Battery-saving mode: trying format {:?}", requested_type);
 
                 match Camera::new(CameraIndex::Index(selected_index), requested) {
                     Ok(mut cam) => {
                         if let Err(e) = cam.open_stream() {
-                            error!("카메라 스트림 열기 실패 ({:?}): {}", requested_type, e);
+                            error!("Failed to open camera stream ({:?}): {}", requested_type, e);
                             continue;
                         }
 
-                        info!("절약 모드: 카메라 스트림 열림 ({:?})", requested_type);
+                        info!("Battery-saving mode: camera stream opened ({:?})", requested_type);
                         tokio::time::sleep(Duration::from_millis(700)).await;
 
                         let mut frame_captured = None;
@@ -613,16 +609,16 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                             match cam.frame() {
                                 Ok(buffer) => {
                                     if attempt > 1 {
-                                        info!("절약 모드: {}회 재시도 후 캡처 성공", attempt - 1);
+                                        info!("Battery-saving mode: capture succeeded after {} retries", attempt - 1);
                                     } else {
-                                        info!("절약 모드: 카메라 캡처 성공");
+                                        info!("Battery-saving mode: camera capture succeeded");
                                     }
                                     frame_captured = Some(buffer);
                                     break;
                                 }
                                 Err(e) => {
                                     warn!(
-                                        "절약 모드: 프레임 캡처 실패 ({:?}, attempt={}): {}",
+                                        "Battery-saving mode: frame capture failed ({:?}, attempt={}): {}",
                                         requested_type,
                                         attempt,
                                         e
@@ -633,9 +629,9 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                         }
 
                         if let Err(e) = cam.stop_stream() {
-                            error!("카메라 스트림 닫기 실패 ({:?}): {}", requested_type, e);
+                            error!("Failed to close camera stream ({:?}): {}", requested_type, e);
                         } else {
-                            info!("절약 모드: 카메라 스트림 닫음 ({:?})", requested_type);
+                            info!("Battery-saving mode: camera stream closed ({:?})", requested_type);
                         }
 
                         if frame_captured.is_some() {
@@ -644,24 +640,23 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                         }
                     }
                     Err(e) => {
-                        error!("카메라 초기화 실패 ({:?}): {}", requested_type, e);
+                        error!("Failed to initialize camera ({:?}): {}", requested_type, e);
                     }
                 }
             }
 
             if captured_buffer.is_none() {
-                error!("절약 모드: 사용 가능한 포맷에서 카메라 캡처에 모두 실패");
+                error!("Battery-saving mode: failed to capture from all available formats");
             }
 
             captured_buffer
         } else {
-            // 일반 모드: 기존 로직
             if !ensure_continuous_camera_stream(&state) {
-                warn!("일반 모드 카메라 준비 실패. 다음 주기에서 재시도합니다.");
+                warn!("Normal mode camera preparation failed. Retrying on the next cycle.");
                 continue;
             }
 
-            let mut cam_lock = state.camera.lock().unwrap();
+            let mut cam_lock = lock_or_recover(&state.camera);
             if let Some(cam) = cam_lock.as_mut() {
                 if cam.is_stream_open() {
                     cam.frame().ok()
@@ -674,9 +669,9 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
         };
 
         if let Some(buffer) = buffer_option {
-            info!("절약 모드: 이미지 디코딩 시작");
+            info!("Battery-saving mode: starting image decode");
             if let Ok(decoded_image) = buffer.decode_image::<RgbFormat>() {
-                info!("절약 모드: 이미지 디코딩 성공");
+                info!("Battery-saving mode: image decode succeeded");
                 if let Some(rgb_image) = ImageBuffer::<Rgb<u8>, _>::from_raw(
                     decoded_image.width(),
                     decoded_image.height(),
@@ -685,16 +680,16 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                     match encode_preview_frame_data_url(&rgb_image) {
                         Ok(preview_frame_data_url) => {
                             if let Err(e) = app_handle.emit("camera-preview-frame", &preview_frame_data_url) {
-                                error!("프리뷰 프레임 이벤트 전송 실패: {}", e);
+                                error!("Failed to emit preview frame event: {}", e);
                             }
                         }
                         Err(e) => {
-                            error!("프리뷰 프레임 생성 실패: {}", e);
+                            error!("Failed to generate preview frame: {}", e);
                         }
                     }
 
                     if let Ok(result_str) = state.pose_analyzer.analyze_image_buffer(&rgb_image) {
-                        info!("절약 모드: 자세 분석 성공");
+                        info!("Battery-saving mode: pose analysis succeeded");
                         if let Ok(result_json) = serde_json::from_str::<Value>(&result_str) {
                             let _ = app_handle.emit("analysis-update", &result_json);
                             let score = result_json
@@ -709,16 +704,18 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 .get("shoulder_misalignment")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            info!("절약 모드: 거북목 {}, 어깨 {}", is_turtle, is_shoulder);
+                            info!("Battery-saving mode: turtle_neck={}, shoulder_misalignment={}", is_turtle, is_shoulder);
                             let timestamp = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as i64;
+                                .map(|duration| duration.as_secs() as i64)
+                                .unwrap_or_else(|error| {
+                                    warn!("Failed to convert system time (before UNIX_EPOCH): {}", error);
+                                    0
+                                });
 
                             let instances = app_handle.state::<DbInstances>();
                             let db_map = instances.0.read().await;
 
-                            // ✨ 수정: 중첩된 if let을 하나로 합쳐서 경고 제거
                             if let Some(tauri_plugin_sql::DbPool::Sqlite(sqlite_pool)) =
                                 db_map.get("sqlite:posture_data.db")
                             {
@@ -731,14 +728,14 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                     .execute(sqlite_pool)
                                     .await
                                 {
-                                    error!("데이터베이스 저장 실패: {}", e);
+                                    error!("Database write failed: {}", e);
                                 }
                             }
 
                             if is_turtle || is_shoulder {
-                                let mut last_alert = state.last_alert_time.lock().unwrap();
+                                let mut last_alert = lock_or_recover(&state.last_alert_time);
                                 if last_alert.elapsed() >= Duration::from_secs(10) {
-                                    let lang = state.current_language.lock().unwrap().clone();
+                                    let lang = lock_or_recover(&state.current_language).clone();
                                     let translations = &state.translations;
 
                                     let message_key = if is_turtle && is_shoulder {
@@ -749,14 +746,13 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                         "alert_shoulder"
                                     };
 
-                                    info!("번역 시도: lang='{}', key='{}'", lang, message_key);
+                                    info!("Resolving translation: lang='{}', key='{}'", lang, message_key);
                                     let message = translations.get(&lang, message_key);
-                                    info!("번역 결과: '{}'", message);
+                                    info!("Resolved translation: '{}'", message);
 
-                                    state.alert_messages.lock().unwrap().push(message);
+                                    lock_or_recover(&state.alert_messages).push(message);
                                     *last_alert = Instant::now();
-                                    // 최근 결과 초기화
-                                    state.pose_analyzer.clear_recent_results();
+            state.pose_analyzer.clear_recent_results();
                                 }
                             }
                         }
@@ -783,7 +779,7 @@ fn main() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
@@ -812,21 +808,15 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            // 데스크탑에서 autostart(자동 시작) 등록 시도
             #[cfg(desktop)]
             {
-                // ManagerExt 트레잇을 로컬 스코프에서 가져와 app.autolaunch()를 사용합니다.
                 use tauri_plugin_autostart::ManagerExt;
 
-                // 일부 환경에서는 플러그인이 이미 빌더 단계에서 등록되어 있으므로
-                // autolaunch 매니저를 통해 활성화 상태를 설정합니다.
                 let autostart_manager = app.autolaunch();
-                // enable() 호출을 시도하고 상태를 로깅
                 let _ = autostart_manager.enable();
                 info!("registered for autostart? {}", autostart_manager.is_enabled().unwrap_or(false));
             }
 
-            // ✨ 수정: app.path()가 PathResolver를 반환하므로 .resolver() 없이 바로 참조를 넘겨줍니다.
             let translations = Arc::new(Translations::new(&app.path()));
 
             let app_state = AppState {
@@ -857,21 +847,25 @@ pub fn run() {
                 background_monitoring_task(monitor_app_handle, monitor_state).await;
             });
 
-            // 모델 초기화
             let init_app_handle = app.handle().clone();
             let init_state = app_state.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = init_state.pose_analyzer.initialize_model(init_app_handle.clone()).await {
-                    error!("모델 초기화 실패: {}", e);
+                    error!("Model initialization failed: {}", e);
                 } else {
                     if let Err(e) = init_state.pose_analyzer.load_baseline_from_file(&init_app_handle) {
-                        error!("베이스라인 로드 실패: {}", e);
+                        error!("Failed to load baseline: {}", e);
                     }
                 }
             });
 
+            let default_icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "기본 창 아이콘을 찾을 수 없습니다."))?;
+
             let tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(default_icon)
                 .tooltip("Pose Nudge")
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
@@ -884,76 +878,40 @@ pub fn run() {
                             let _ = window.set_focus();
                         },
                         "start_monitoring" => {
-                            info!("'Start Monitoring' 클릭됨");
-                            *state.monitoring_active.lock().unwrap() = true;
-                            *state.force_capture_now.lock().unwrap() = true;
-
-                            let battery_saving = *state.battery_saving_mode.lock().unwrap();
-                            if !battery_saving {
-                                let mut cam_lock = state.camera.lock().unwrap();
-                                if let Some(cam) = cam_lock.as_mut() {
-                                    if !cam.is_stream_open() {
-                                        if let Err(e) = cam.open_stream() {
-                                            error!("기존 웹캠 스트림 시작 실패: {}", e);
-                                        } else {
-                                            info!("기존 웹캠 스트림 시작됨.");
-                                        }
+                            info!("'Start Monitoring' clicked");
+                            *lock_or_recover(&state.monitoring_active) = true;
+                            *lock_or_recover(&state.force_capture_now) = true;
+                            if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
+                                if let Some(default_icon) = app.default_window_icon() {
+                                    if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
+                                        error!("Failed to update tray icon: {}", e);
                                     }
                                 } else {
-                                    let index = *state.selected_camera_index.lock().unwrap();
-                                    info!("선택된 인덱스 {}번 카메라로 초기화 시도", index);
-                                    let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
-                                    match Camera::new(CameraIndex::Index(index), requested) {
-                                        Ok(mut cam) => {
-                                            info!("웹캠 초기화 성공: {}", cam.info().human_name());
-                                            if let Err(e) = cam.open_stream() {
-                                                error!("새 웹캠 스트림 시작 실패: {}", e);
-                                            } else {
-                                                info!("새 웹캠 스트림 시작됨.");
-                                                *cam_lock = Some(cam);
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!("인덱스 {}번 웹캠 초기화 실패: {}", index, e);
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(tray) = state.tray.lock().unwrap().as_ref() {
-                                if let Err(e) = tray.set_icon(Some(app.default_window_icon().unwrap().clone())) {
-                                    error!("아이콘 변경 실패: {}", e);
+                                    warn!("Default window icon not found; skipping tray icon update.");
                                 }
                             }
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
                         }
                         "stop_monitoring" => {
-                            info!("'Stop Monitoring' 클릭됨");
-                            *state.monitoring_active.lock().unwrap() = false;
-                            *state.force_capture_now.lock().unwrap() = false;
-                            if let Some(cam) = &mut *state.camera.lock().unwrap() {
-                                if cam.is_stream_open() {
-                                    if let Err(e) = cam.stop_stream() {
-                                        error!("웹캠 스트림 중지 실패: {}", e);
-                                    } else {
-                                        info!("웹캠 스트림 중지됨.");
-                                    }
-                                }
-                            }
-                            if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+                            info!("'Stop Monitoring' clicked");
+                            *lock_or_recover(&state.monitoring_active) = false;
+                            *lock_or_recover(&state.force_capture_now) = false;
+                            stop_and_release_camera(&state, "tray stop_monitoring action");
+                            if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
                                 if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
                                     if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
                                         if let Ok(monitoring_off_icon) = Image::from_bytes(&bytes) {
                                             if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-                                                error!("아이콘 변경 실패: {}", e);
+                                                error!("Failed to update tray icon: {}", e);
                                             }
                                         } else {
-                                            error!("아이콘 생성 실패");
+                                            error!("Failed to create icon image");
                                         }
                                     } else {
-                                        error!("아이콘 파일 읽기 실패");
+                                        error!("Failed to read icon file");
                                     }
                                 } else {
-                                    error!("아이콘 경로 해결 실패");
+                                    error!("Failed to resolve icon path");
                                 }
                             }
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
@@ -962,8 +920,8 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-            *app_state.tray.lock().unwrap() = Some(tray);
-            info!("Pose Nudge 애플리케이션 초기화 완료");
+            *lock_or_recover(&app_state.tray) = Some(tray);
+            info!("Pose Nudge application initialized");
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -972,20 +930,8 @@ pub fn run() {
                 let _ = window.hide();
             }
             tauri::WindowEvent::Destroyed => {
-                let camera_to_stop = {
-                    let state = window.state::<AppState>();
-                    let mut guard = state.camera.lock().unwrap();
-                    guard.take()
-                };
-                if let Some(mut cam) = camera_to_stop {
-                    if cam.is_stream_open() {
-                        if let Err(e) = cam.stop_stream() {
-                             error!("웹캠 스트림 종료 실패: {}", e);
-                        } else {
-                            info!("웹캠 스트림을 안전하게 종료했습니다.");
-                        }
-                    }
-                }
+                let state = window.state::<AppState>();
+                stop_and_release_camera(&state, "window destroyed");
             }
             _ => {}
         })
@@ -1009,6 +955,9 @@ pub fn run() {
             set_battery_saving_mode,
             restart_app
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(error) = run_result {
+        error!("Failed to run Tauri application: {}", error);
+    }
 }
