@@ -10,6 +10,13 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { useTheme } from 'next-themes';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { Bell, CheckCircle2, KeyRound, MonitorUp, Moon, Sparkles, Volume2 } from 'lucide-react';
+import {
+    loadReminderPreferences,
+    saveReminderPreferences,
+    type ReminderPreferences,
+} from '@/lib/reminders';
 
 // --- LocalStorage Keys ---
 const LANGUAGE_KEY = "pose_nudge_language";
@@ -28,20 +35,40 @@ interface CameraDetail {
     name: string;
 }
 
+interface LicenseStatus {
+    edition: 'free' | 'pro';
+    active: boolean;
+    commercial_ready: boolean;
+    license_id?: string;
+    expires_at?: number;
+    message?: string;
+}
+
 const normalizeCameraName = (value: string): string =>
     value.toLowerCase().replace(/\s+/g, ' ').trim();
+
+const normalizeSettingsLanguage = (value: string): string => {
+    const normalized = value.toLowerCase();
+    if (normalized.startsWith('zh-hant') || normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk')) return 'zh-Hant';
+    if (normalized.startsWith('zh')) return 'zh';
+    if (normalized.startsWith('ko')) return 'ko';
+    if (normalized.startsWith('ja')) return 'ja';
+    if (normalized.startsWith('tr')) return 'tr';
+    return 'en';
+};
 
 // --- Components ---
 
 const LanguageSettings = () => {
     const { i18n, t } = useTranslation();
-    const [lang, setLang] = useState(() => localStorage.getItem(LANGUAGE_KEY) || i18n.language || 'ko');
+    const [lang, setLang] = useState(() => normalizeSettingsLanguage(localStorage.getItem(LANGUAGE_KEY) || i18n.language || 'en'));
 
     useEffect(() => {
-        const initialLang =
+        const initialLang = normalizeSettingsLanguage(
             localStorage.getItem(LANGUAGE_KEY) ||
             i18n.language ||
-            'en';
+            'en',
+        );
 
         if (initialLang !== i18n.language) {
             i18n.changeLanguage(initialLang);
@@ -72,6 +99,7 @@ const LanguageSettings = () => {
                         <SelectItem value="en">{t('settings.languageEnglish', 'English')}</SelectItem>
                         <SelectItem value="ja">{t('settings.languageJapanese', '日本語')}</SelectItem>
                         <SelectItem value="zh">{t('settings.languageChinese', '简体中文')}</SelectItem>
+                        <SelectItem value="zh-Hant">{t('settings.languageTraditional', '繁體中文')}</SelectItem>
                         <SelectItem value="tr">{t('settings.languageTurkish', 'Türkçe')}</SelectItem>
                     </SelectContent>
                 </Select>
@@ -519,6 +547,66 @@ const ThemeSettings = () => {
 
 const NotificationSettings = () => {
     const { t } = useTranslation();
+    const [preferences, setPreferences] = useState<ReminderPreferences>(loadReminderPreferences);
+    const [permission, setPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
+    const [testStatus, setTestStatus] = useState('');
+    const [proEnabled, setProEnabled] = useState(true);
+
+    const refreshPermission = useCallback(async () => {
+        try {
+            setPermission(await isPermissionGranted() ? 'granted' : 'prompt');
+        } catch (error) {
+            console.error('Failed to read notification permission:', error);
+            setPermission('prompt');
+        }
+    }, []);
+
+    useEffect(() => {
+        void refreshPermission();
+        invoke<LicenseStatus>('get_license_status')
+            .then((status) => setProEnabled(status.active || !status.commercial_ready))
+            .catch(console.error);
+    }, [refreshPermission]);
+
+    useEffect(() => {
+        saveReminderPreferences(preferences);
+        invoke<ReminderPreferences>('set_reminder_preferences', { preferences })
+            .then((normalized) => {
+                if (JSON.stringify(normalized) !== JSON.stringify(preferences)) {
+                    setPreferences(normalized);
+                    saveReminderPreferences(normalized);
+                }
+            })
+            .catch(console.error);
+    }, [preferences]);
+
+    const setChannel = (key: keyof ReminderPreferences, enabled: boolean) => {
+        setPreferences((current) => ({ ...current, [key]: enabled }));
+    };
+
+    const requestNotificationPermission = async () => {
+        try {
+            const result = await requestPermission();
+            setPermission(result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt');
+        } catch (error) {
+            console.error('Failed to request notification permission:', error);
+            setPermission('denied');
+        }
+    };
+
+    const sendTestReminder = async () => {
+        setTestStatus('');
+        if (preferences.native_notification && permission !== 'granted') {
+            await requestNotificationPermission();
+        }
+        try {
+            await invoke('send_test_reminder');
+            setTestStatus(t('settings.notificationTestSent', '测试提醒已发送。若系统通知未出现，顶部悬浮提醒仍应可见。'));
+        } catch (error) {
+            console.error('Failed to send test reminder:', error);
+            setTestStatus(t('settings.notificationTestFailed', '测试提醒发送失败，请检查日志。'));
+        }
+    };
 
     const openNotificationSettings = async () => {
         try {
@@ -537,17 +625,199 @@ const NotificationSettings = () => {
     };
 
     return (
-        <Card>
+        <Card className="overflow-hidden border-[#2f7d66]/20">
             <CardHeader>
-                <CardTitle>{t('settings.notificationTitle', '시스템 알림 설정')}</CardTitle>
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <CardTitle>{t('settings.notificationTitle', '可靠提醒')}</CardTitle>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                            {t('settings.notificationSubtitle', '选择一种或多种提醒方式。悬浮提醒不会依赖系统通知横幅。')}
+                        </p>
+                    </div>
+                    <div className={`rounded-full px-3 py-1 text-xs font-semibold ${permission === 'granted' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                        {permission === 'granted'
+                            ? t('settings.notificationGranted', '系统通知已授权')
+                            : t('settings.notificationNotGranted', '系统通知未授权')}
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+                <div className="grid gap-3 md:grid-cols-3">
+                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40">
+                        <Bell className="mt-0.5 h-5 w-5 text-[#2f7d66]" />
+                        <span className="min-w-0 flex-1">
+                            <span className="block font-semibold">{t('settings.channelNative', '系统通知')}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelNativeDesc', '遵循 macOS / Windows 的通知设置。')}</span>
+                        </span>
+                        <Switch checked={preferences.native_notification} onCheckedChange={(checked) => setChannel('native_notification', checked)} />
+                    </label>
+
+                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#2f7d66]/30 bg-[#edf5f1] p-4 text-[#14231f] transition-colors hover:bg-[#e4f0ea] dark:bg-[#17372f] dark:text-white">
+                        <MonitorUp className="mt-0.5 h-5 w-5 text-[#2f7d66] dark:text-[#7bc4aa]" />
+                        <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2 font-semibold">
+                                {t('settings.channelFloating', '顶部悬浮提醒')}
+                                <span className="rounded-full bg-[#2f7d66] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white">Free</span>
+                            </span>
+                            <span className="mt-1 block text-xs opacity-70">{t('settings.channelFloatingDesc', '系统通知关闭时也能看见。')}</span>
+                        </span>
+                        <Switch checked={preferences.floating_window} onCheckedChange={(checked) => setChannel('floating_window', checked)} />
+                    </label>
+
+                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40">
+                        <Moon className="mt-0.5 h-5 w-5 text-[#d9654b]" />
+                        <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2 font-semibold">
+                                {t('settings.channelDim', '屏幕柔和变暗')}
+                                <span className="rounded-full bg-[#14231f] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white">Pro</span>
+                            </span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelDimDesc', '用视觉场变化提醒，不打断输入。')}</span>
+                        </span>
+                        <Switch
+                            checked={preferences.screen_dim}
+                            disabled={!proEnabled}
+                            onCheckedChange={(checked) => setChannel('screen_dim', checked)}
+                        />
+                    </label>
+                </div>
+
+                <div className="flex flex-col gap-4 rounded-xl border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                        <Volume2 className="h-5 w-5 text-muted-foreground" />
+                        <div>
+                            <p className="font-medium">{t('settings.channelSound', '提醒声音')}</p>
+                            <p className="text-xs text-muted-foreground">{t('settings.channelSoundDesc', '仅在发送系统通知时播放。')}</p>
+                        </div>
+                        <Switch checked={preferences.sound} onCheckedChange={(checked) => setChannel('sound', checked)} />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        {permission !== 'granted' && (
+                            <Button onClick={requestNotificationPermission} variant="outline">
+                                {t('settings.notificationRequest', '申请通知权限')}
+                            </Button>
+                        )}
+                        <Button onClick={sendTestReminder} className="bg-[#2f7d66] text-white hover:bg-[#276b58]">
+                            {t('settings.notificationTest', '发送测试提醒')}
+                        </Button>
+                        <Button onClick={openNotificationSettings} variant="ghost">
+                            {t('settings.notificationGoTo', '打开系统设置')}
+                        </Button>
+                    </div>
+                </div>
+
+                {testStatus && (
+                    <p className="flex items-center gap-2 text-sm text-[#2f7d66]" role="status">
+                        <CheckCircle2 className="h-4 w-4" />
+                        {testStatus}
+                    </p>
+                )}
+            </CardContent>
+        </Card>
+    );
+};
+
+const LicenseSettings = () => {
+    const { t } = useTranslation();
+    const [status, setStatus] = useState<LicenseStatus | null>(null);
+    const [licenseKey, setLicenseKey] = useState('');
+    const [activationStatus, setActivationStatus] = useState('');
+    const [activating, setActivating] = useState(false);
+    const purchaseUrl = 'https://01mvp.com/products/oneposture-pro';
+
+    const activationErrorMessage = (error: unknown) => {
+        const code = String(error);
+        if (code.includes('INVALID_LICENSE')) return t('settings.activationInvalid', '激活码无效或尚未完成交付。');
+        if (code.includes('DEVICE_LIMIT_REACHED')) return t('settings.activationDeviceLimit', '此激活码的设备名额已用完。');
+        if (code.includes('TOO_MANY_REQUESTS')) return t('settings.activationRateLimited', '请求过于频繁，请稍后再试。');
+        if (code.includes('ACTIVATION_UNAVAILABLE')) return t('settings.activationUnavailable', '激活服务暂不可用，请稍后再试。');
+        if (code.includes('NETWORK_ERROR')) return t('settings.activationNetwork', '无法连接激活服务，请检查网络。');
+        return t('settings.activationFailed', '激活失败，请检查激活码后重试。');
+    };
+
+    useEffect(() => {
+        invoke<LicenseStatus>('get_license_status')
+            .then(setStatus)
+            .catch((error) => setActivationStatus(String(error)));
+    }, []);
+
+    const activate = async () => {
+        if (!licenseKey.trim()) return;
+        setActivating(true);
+        setActivationStatus('');
+        try {
+            const nextStatus = await invoke<LicenseStatus>('activate_license', { licenseKey });
+            setStatus(nextStatus);
+            setLicenseKey('');
+            setActivationStatus(t('settings.activationSuccess', 'OnePosture Pro 已激活，可离线使用。'));
+        } catch (error) {
+            setActivationStatus(activationErrorMessage(error));
+        } finally {
+            setActivating(false);
+        }
+    };
+
+    return (
+        <Card className="overflow-hidden border-[#14231f]/15">
+            <div className="h-1.5 bg-gradient-to-r from-[#2f7d66] via-[#e5a84b] to-[#d9654b]" />
+            <CardHeader>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <CardTitle className="flex items-center gap-2">
+                            <Sparkles className="h-5 w-5 text-[#e5a84b]" />
+                            OnePosture Pro
+                        </CardTitle>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                            {t('settings.proSubtitle', '一次买断，解锁屏幕柔和变暗提醒；最多可激活 3 台设备。')}
+                        </p>
+                    </div>
+                    <div className="text-left sm:text-right">
+                        <p className="text-2xl font-bold text-[#14231f] dark:text-white">¥39</p>
+                        <p className="text-xs text-muted-foreground">中国 · 永久 / 海外 US$4.99</p>
+                    </div>
+                </div>
             </CardHeader>
             <CardContent className="space-y-4">
-                <div className="p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800 dark:bg-blue-900 dark:border-blue-600 dark:text-blue-200">
-                    <p>{t('settings.notificationGuide', '알림이 오지 않는 경우, 아래 버튼을 클릭하여 시스템 설정에서 앱의 알림 권한을 허용해주세요.')}</p>
-                    <Button onClick={openNotificationSettings} className="mt-2">
-                        {t('settings.notificationGoTo', '알림 설정으로 이동')}
-                    </Button>
+                <div className="grid gap-2 text-sm sm:grid-cols-3">
+                    <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureDim', '屏幕柔和变暗')}</p>
+                    <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureOffline', '激活后永久离线使用')}</p>
+                    <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureDevices', '最多 3 台设备')}</p>
                 </div>
+
+                {status?.active ? (
+                    <p className="flex items-center gap-2 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+                        <CheckCircle2 className="h-5 w-5" />
+                        {t('settings.proActive', 'Pro 已激活')}
+                    </p>
+                ) : status?.commercial_ready ? (
+                    <div className="space-y-3">
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                            <div className="relative flex-1">
+                                <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                <input
+                                    value={licenseKey}
+                                    onChange={(event) => setLicenseKey(event.target.value)}
+                                    placeholder={t('settings.licensePlaceholder', '输入购买后收到的激活码')}
+                                    className="h-10 w-full rounded-md border bg-background pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-[#2f7d66]"
+                                />
+                            </div>
+                            <Button onClick={activate} disabled={activating || !licenseKey.trim()}>
+                                {activating ? t('settings.activating', '激活中…') : t('settings.activate', '激活 Pro')}
+                            </Button>
+                            <Button onClick={() => void open(purchaseUrl)} variant="outline">
+                                {t('settings.buyPro', '购买激活码')}
+                            </Button>
+                        </div>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                            {t('settings.activationGuide', '购买后，激活码会显示在 01MVP 订单页并发送到邮箱。首次激活需要联网，成功后可永久离线使用。')}
+                        </p>
+                    </div>
+                ) : (
+                    <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                        {t('settings.commercePreview', '这个构建未配置 01MVP 激活服务，Pro 功能暂不可购买或激活。')}
+                    </p>
+                )}
+
+                {activationStatus && <p className="text-sm text-muted-foreground" role="status">{activationStatus}</p>}
             </CardContent>
         </Card>
     );
@@ -561,6 +831,7 @@ const SettingsPage = () => {
             <DetectionSettings />
             <CameraSettings />
             <NotificationSettings />
+            <LicenseSettings />
             <UpdateSettings />
         </div>
     );

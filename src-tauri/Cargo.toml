@@ -1,8 +1,8 @@
 [package]
-name = "pose-nudge"
-version = "1.5.1"
-description = "A Tauri App"
-authors = ["you"]
+name = "oneposture"
+version = "2.0.0"
+description = "A privacy-first posture companion with reliable reminders"
+authors = ["One Apps Studio", "Pose Nudge contributors"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.5", features = [] }
 
 [dependencies]
-tauri = { version = "2.10.2", features = ["protocol-asset", "tray-icon", "image-png"] }
+tauri = { version = "2.10.2", features = ["macos-private-api", "protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-notification = "2.3.3"
 serde = { version = "1", features = ["derive"] }
@@ -44,6 +44,8 @@ tauri-plugin-shell = "2.3.5"
 tauri-plugin-os = "2.3.2"
 nokhwa = { version = "0.10.10", features = ["input-native", "output-threaded"] }
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio"] }
+ed25519-dalek = "2.2.0"
+uuid = { version = "1.21.0", features = ["v4"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2.5.1"

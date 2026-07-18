@@ -12,15 +12,11 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
-  image::Image,
-  menu::{Menu, MenuItem, PredefinedMenuItem},
-  path::{BaseDirectory, PathResolver},
-  tray::{TrayIcon, TrayIconBuilder},
-  AppHandle,
-  Emitter,
-  Manager,
-  Runtime,
-  State,
+    image::Image,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    path::{BaseDirectory, PathResolver},
+    tray::{TrayIcon, TrayIconBuilder},
+    AppHandle, Emitter, Manager, PhysicalPosition, Runtime, State,
 };
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
@@ -32,12 +28,27 @@ use nokhwa::{
     Camera,
 };
 
-use sqlx;
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_sql::{DbInstances, Migration, MigrationKind};
 
+mod licensing;
 mod pose_analysis;
+mod reminder;
 use pose_analysis::PoseAnalyzer;
+use reminder::{PostureSignal, ReminderEngine, ReminderPreferences, ReminderState};
+
+#[tauri::command]
+fn get_license_status(app: AppHandle) -> licensing::LicenseStatus {
+    licensing::get_license_status(&app)
+}
+
+#[tauri::command]
+async fn activate_license(
+    app: AppHandle,
+    license_key: String,
+) -> Result<licensing::LicenseStatus, String> {
+    licensing::activate(&app, &license_key).await
+}
 
 pub struct Translations {
     data: HashMap<String, HashMap<String, String>>,
@@ -46,7 +57,7 @@ pub struct Translations {
 impl Translations {
     pub fn new<R: Runtime>(path_resolver: &PathResolver<R>) -> Self {
         let mut data = HashMap::new();
-        let locales = vec!["en", "ko", "ja", "zh", "tr"];
+        let locales = vec!["en", "ko", "ja", "zh", "zh-Hant", "tr"];
 
         for lang in locales {
             if let Ok(resource_path) =
@@ -59,10 +70,16 @@ impl Translations {
 
                         info!("Loaded translation file for '{}'.", lang);
                     } else {
-                        error!("Failed to parse translation file for '{}': {:?}", lang, resource_path);
+                        error!(
+                            "Failed to parse translation file for '{}': {:?}",
+                            lang, resource_path
+                        );
                     }
                 } else {
-                    error!("Failed to read translation file for '{}': {:?}", lang, resource_path);
+                    error!(
+                        "Failed to read translation file for '{}': {:?}",
+                        lang, resource_path
+                    );
                 }
             } else {
                 error!("Translation resource path not found for '{}'.", lang);
@@ -92,6 +109,11 @@ fn normalize_language_code(lang: &str) -> String {
         "ko".to_string()
     } else if normalized.starts_with("ja") {
         "ja".to_string()
+    } else if normalized.starts_with("zh-hant")
+        || normalized.starts_with("zh-tw")
+        || normalized.starts_with("zh-hk")
+    {
+        "zh-Hant".to_string()
     } else if normalized.starts_with("zh") {
         "zh".to_string()
     } else if normalized.starts_with("tr") {
@@ -113,8 +135,8 @@ struct AppState {
     pose_analyzer: Arc<PoseAnalyzer>,
     monitoring_active: Arc<Mutex<bool>>,
     force_capture_now: Arc<Mutex<bool>>,
-    last_alert_time: Arc<Mutex<Instant>>,
-    alert_messages: Arc<Mutex<Vec<String>>>,
+    reminder_engine: Arc<Mutex<ReminderEngine>>,
+    reminder_preferences: Arc<Mutex<ReminderPreferences>>,
     camera: Arc<Mutex<Option<Camera>>>,
     selected_camera_index: Arc<Mutex<u32>>,
     monitoring_interval_secs: Arc<Mutex<u64>>,
@@ -122,6 +144,7 @@ struct AppState {
     current_language: Arc<Mutex<String>>,
     battery_saving_mode: Arc<Mutex<bool>>,
     tray: Arc<Mutex<Option<TrayIcon>>>,
+    tray_status_item: Arc<Mutex<Option<MenuItem<tauri::Wry>>>>,
 }
 
 fn ensure_continuous_camera_stream(state: &AppState) -> bool {
@@ -145,7 +168,8 @@ fn ensure_continuous_camera_stream(state: &AppState) -> bool {
     }
 
     let index = *lock_or_recover(&state.selected_camera_index);
-    let requested = RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+    let requested =
+        RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
 
     match Camera::new(CameraIndex::Index(index), requested) {
         Ok(mut cam) => match cam.open_stream() {
@@ -155,12 +179,18 @@ fn ensure_continuous_camera_stream(state: &AppState) -> bool {
                 true
             }
             Err(e) => {
-                error!("Failed to start camera stream in normal mode (index={}): {}", index, e);
+                error!(
+                    "Failed to start camera stream in normal mode (index={}): {}",
+                    index, e
+                );
                 false
             }
         },
         Err(e) => {
-            error!("Failed to initialize camera in normal mode (index={}): {}", index, e);
+            error!(
+                "Failed to initialize camera in normal mode (index={}): {}",
+                index, e
+            );
             false
         }
     }
@@ -230,6 +260,7 @@ async fn initialize_pose_model(
 async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *lock_or_recover(&state.monitoring_active) = true;
     *lock_or_recover(&state.force_capture_now) = true;
+    lock_or_recover(&state.reminder_engine).reset();
 
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
         if let Some(default_icon) = app.default_window_icon() {
@@ -240,7 +271,11 @@ async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<
             warn!("Default window icon not found.");
         }
     }
-    let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
+    update_tray_status(&state, "Monitoring");
+    let _ = app.emit(
+        "monitoring-state-changed",
+        &serde_json::json!({ "active": true }),
+    );
     info!("Real-time monitoring started");
     Ok(())
 }
@@ -258,21 +293,28 @@ fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Resul
         )
         .map_err(|e| format!("프리뷰 프레임 JPEG 인코딩 실패: {}", e))?;
 
-    Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(jpeg_bytes)))
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        STANDARD.encode(jpeg_bytes)
+    ))
 }
 
 #[tauri::command]
 async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *lock_or_recover(&state.monitoring_active) = false;
     *lock_or_recover(&state.force_capture_now) = false;
+    lock_or_recover(&state.reminder_engine).reset();
     stop_and_release_camera(&state, "stop_monitoring command");
 
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
-        if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
+        if let Ok(monitoring_off_icon_path) = app
+            .path()
+            .resolve("icons/monitoring_off.png", BaseDirectory::Resource)
+        {
             if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
                 if let Ok(monitoring_off_icon) = Image::from_bytes(&bytes) {
                     if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-                error!("Failed to update tray icon: {}", e);
+                        error!("Failed to update tray icon: {}", e);
                     }
                 } else {
                     error!("Failed to create icon image");
@@ -284,7 +326,16 @@ async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(
             error!("Failed to resolve icon path");
         }
     }
-    let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
+    update_tray_status(&state, "Paused");
+    for label in ["reminder", "screen-dim"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
+    let _ = app.emit(
+        "monitoring-state-changed",
+        &serde_json::json!({ "active": false }),
+    );
     info!("Real-time monitoring stopped");
     Ok(())
 }
@@ -293,12 +344,12 @@ async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(
 async fn calibrate_user_posture(
     state: State<'_, AppState>,
     handle: tauri::AppHandle,
-    image_data: String,
+    image_data_samples: Vec<String>,
 ) -> Result<(), String> {
     info!("Starting user posture calibration");
     state
         .pose_analyzer
-        .set_baseline_posture(&image_data, &handle)
+        .set_baseline_postures(&image_data_samples, &handle)
         .map_err(|e| {
             error!("User posture calibration failed: {}", e);
             e.to_string()
@@ -317,17 +368,154 @@ fn get_pose_recommendations() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn get_alert_messages(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let mut alert_messages = lock_or_recover(&state.alert_messages);
-    let messages = alert_messages.clone();
-    alert_messages.clear();
-    Ok(messages)
-}
-
-#[tauri::command]
 fn get_monitoring_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let monitoring_active = *lock_or_recover(&state.monitoring_active);
     Ok(serde_json::json!({ "active": monitoring_active }))
+}
+
+#[tauri::command]
+fn get_reminder_preferences(state: State<'_, AppState>) -> ReminderPreferences {
+    lock_or_recover(&state.reminder_preferences).clone()
+}
+
+#[tauri::command]
+fn set_reminder_preferences(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    preferences: ReminderPreferences,
+) -> ReminderPreferences {
+    let mut normalized = preferences.normalized();
+    let license = licensing::get_license_status(&app);
+    if license.commercial_ready && !license.active {
+        normalized.screen_dim = false;
+    }
+    *lock_or_recover(&state.reminder_preferences) = normalized.clone();
+    normalized
+}
+
+#[derive(serde::Serialize, Clone)]
+struct ReminderPayload {
+    message: String,
+    duration_ms: u64,
+    dim_opacity: f32,
+    is_test: bool,
+}
+
+fn position_floating_reminder(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("reminder") else {
+        return;
+    };
+    let Ok(Some(monitor)) = app.primary_monitor() else {
+        return;
+    };
+
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let Ok(window_size) = window.outer_size() else {
+        return;
+    };
+    let x =
+        monitor_position.x + ((monitor_size.width as i32 - window_size.width as i32) / 2).max(0);
+    let y = monitor_position.y + 44;
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+fn cover_primary_monitor(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("screen-dim") else {
+        return;
+    };
+    let Ok(Some(monitor)) = app.primary_monitor() else {
+        return;
+    };
+    let _ = window.set_position(*monitor.position());
+    let _ = window.set_size(*monitor.size());
+}
+
+fn update_tray_status(state: &AppState, label: &str) {
+    if let Some(item) = lock_or_recover(&state.tray_status_item).as_ref() {
+        let _ = item.set_text(format!("Status: {}", label));
+    }
+    if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
+        let _ = tray.set_tooltip(Some(format!("OnePosture · {}", label)));
+    }
+}
+
+fn deliver_reminder(
+    app: &AppHandle,
+    preferences: &ReminderPreferences,
+    message: String,
+    is_test: bool,
+) {
+    let payload = ReminderPayload {
+        message: message.clone(),
+        duration_ms: preferences.display_seconds * 1000,
+        dim_opacity: preferences.dim_opacity,
+        is_test,
+    };
+
+    // Keep the main window informed for accessibility announcements and any
+    // visible in-app status. The reminder surfaces are independent fallbacks.
+    let _ = app.emit("posture-alert", &message);
+
+    if preferences.floating_window {
+        position_floating_reminder(app);
+        if let Some(window) = app.get_webview_window("reminder") {
+            let _ = window.show();
+            let _ = window.emit("reliable-reminder", &payload);
+        }
+    }
+
+    if preferences.screen_dim {
+        cover_primary_monitor(app);
+        if let Some(window) = app.get_webview_window("screen-dim") {
+            let _ = window.show();
+            let _ = window.emit("reliable-reminder", &payload);
+        }
+    }
+
+    if preferences.native_notification {
+        let mut builder = app
+            .notification()
+            .builder()
+            .title("OnePosture")
+            .body(&message)
+            .icon("icons/icon.png".to_string());
+        if preferences.sound {
+            builder = builder.sound("Ping");
+        }
+        if let Err(error) = builder.show() {
+            error!("Failed to send system notification: {}", error);
+        }
+    }
+
+    let hide_app = app.clone();
+    let hide_after = preferences.display_seconds;
+    tauri::async_runtime::spawn(async move {
+        sleep(Duration::from_secs(hide_after)).await;
+        for label in ["reminder", "screen-dim"] {
+            if let Some(window) = hide_app.get_webview_window(label) {
+                let _ = window.hide();
+            }
+        }
+    });
+}
+
+#[tauri::command]
+fn send_test_reminder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let preferences = lock_or_recover(&state.reminder_preferences).clone();
+    let lang = lock_or_recover(&state.current_language).clone();
+    let message = state.translations.get(&lang, "alert_both");
+    deliver_reminder(&app, &preferences, message, true);
+    Ok(())
+}
+
+#[tauri::command]
+fn dismiss_reminder_surfaces(app: AppHandle) {
+    for label in ["reminder", "screen-dim"] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.hide();
+        }
+    }
 }
 
 #[tauri::command]
@@ -381,7 +569,7 @@ async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
             let camera_details = cameras
                 .into_iter()
                 .map(|cam: CameraInfo| CameraDetail {
-                    index: cam.index().as_index().unwrap_or(0) as u32,
+                    index: cam.index().as_index().unwrap_or(0),
                     name: cam.human_name(),
                 })
                 .collect();
@@ -460,7 +648,10 @@ async fn set_monitoring_interval(
     } else {
         3
     };
-    info!("Monitoring interval updated: {} seconds", interval_secs_final);
+    info!(
+        "Monitoring interval updated: {} seconds",
+        interval_secs_final
+    );
     *lock_or_recover(&state.monitoring_interval_secs) = interval_secs_final;
     Ok(())
 }
@@ -507,41 +698,6 @@ async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 
 // --- Background Tasks ---
 
-async fn background_alert_task(app_handle: AppHandle, state: AppState) {
-    let mut interval = tokio::time::interval(Duration::from_secs(3));
-    loop {
-        interval.tick().await;
-        let messages_to_send = {
-            let mut alert_messages = lock_or_recover(&state.alert_messages);
-            if !alert_messages.is_empty() {
-                let message = alert_messages.drain(..).collect::<Vec<_>>().join("\n");
-                Some(message)
-            } else {
-                None
-            }
-        };
-
-        if let Some(message) = messages_to_send {
-            if message.is_empty() {
-                continue;
-            }
-
-            info!("System notification triggered: {}", &message);
-
-            let builder = app_handle.notification().builder();
-            let result = builder
-                .title("🐢")
-                .body(&message)
-                .icon("icons/icon.png".to_string())
-                .show();
-
-            if let Err(e) = result {
-                error!("Failed to send system notification: {}", e);
-            }
-        }
-    }
-}
-
 async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
     let mut last_analysis_time = Instant::now() - Duration::from_secs(3);
 
@@ -580,7 +736,10 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
         let selected_index = *lock_or_recover(&state.selected_camera_index);
         let buffer_option = if battery_saving {
             stop_and_release_camera(&state, "pre-capture cleanup for battery-saving mode");
-            info!("Battery-saving mode: attempting camera capture, index {}", selected_index);
+            info!(
+                "Battery-saving mode: attempting camera capture, index {}",
+                selected_index
+            );
             let requested_types = [
                 RequestedFormatType::HighestFrameRate(15),
                 RequestedFormatType::HighestFrameRate(10),
@@ -601,7 +760,10 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                             continue;
                         }
 
-                        info!("Battery-saving mode: camera stream opened ({:?})", requested_type);
+                        info!(
+                            "Battery-saving mode: camera stream opened ({:?})",
+                            requested_type
+                        );
                         tokio::time::sleep(Duration::from_millis(700)).await;
 
                         let mut frame_captured = None;
@@ -629,9 +791,15 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                         }
 
                         if let Err(e) = cam.stop_stream() {
-                            error!("Failed to close camera stream ({:?}): {}", requested_type, e);
+                            error!(
+                                "Failed to close camera stream ({:?}): {}",
+                                requested_type, e
+                            );
                         } else {
-                            info!("Battery-saving mode: camera stream closed ({:?})", requested_type);
+                            info!(
+                                "Battery-saving mode: camera stream closed ({:?})",
+                                requested_type
+                            );
                         }
 
                         if frame_captured.is_some() {
@@ -679,7 +847,9 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                 ) {
                     match encode_preview_frame_data_url(&rgb_image) {
                         Ok(preview_frame_data_url) => {
-                            if let Err(e) = app_handle.emit("camera-preview-frame", &preview_frame_data_url) {
+                            if let Err(e) =
+                                app_handle.emit("camera-preview-frame", &preview_frame_data_url)
+                            {
                                 error!("Failed to emit preview frame event: {}", e);
                             }
                         }
@@ -704,12 +874,51 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 .get("shoulder_misalignment")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            info!("Battery-saving mode: turtle_neck={}, shoulder_misalignment={}", is_turtle, is_shoulder);
+                            let reliable = result_json
+                                .get("reliable")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            info!("Pose result: reliable={}, head_offset={}, shoulder_misalignment={}", reliable, is_turtle, is_shoulder);
+
+                            let preferences = lock_or_recover(&state.reminder_preferences).clone();
+                            let signal = if !reliable {
+                                PostureSignal::Unreliable
+                            } else if is_turtle || is_shoulder {
+                                PostureSignal::Bad
+                            } else {
+                                PostureSignal::Good
+                            };
+                            let decision = lock_or_recover(&state.reminder_engine).observe(
+                                signal,
+                                Instant::now(),
+                                &preferences,
+                            );
+
+                            match decision.state {
+                                ReminderState::WaitingForSignal => {
+                                    update_tray_status(&state, "Camera unclear")
+                                }
+                                ReminderState::Good => update_tray_status(&state, "Posture good"),
+                                ReminderState::Drifting => {
+                                    update_tray_status(&state, "Posture drifting")
+                                }
+                                ReminderState::Cooldown => {
+                                    update_tray_status(&state, "Reminder delivered")
+                                }
+                            }
+
+                            if !reliable {
+                                continue;
+                            }
+
                             let timestamp = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .map(|duration| duration.as_secs() as i64)
                                 .unwrap_or_else(|error| {
-                                    warn!("Failed to convert system time (before UNIX_EPOCH): {}", error);
+                                    warn!(
+                                        "Failed to convert system time (before UNIX_EPOCH): {}",
+                                        error
+                                    );
                                     0
                                 });
 
@@ -732,28 +941,17 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 }
                             }
 
-                            if is_turtle || is_shoulder {
-                                let mut last_alert = lock_or_recover(&state.last_alert_time);
-                                if last_alert.elapsed() >= Duration::from_secs(10) {
-                                    let lang = lock_or_recover(&state.current_language).clone();
-                                    let translations = &state.translations;
-
-                                    let message_key = if is_turtle && is_shoulder {
-                                        "alert_both"
-                                    } else if is_turtle {
-                                        "alert_turtle"
-                                    } else {
-                                        "alert_shoulder"
-                                    };
-
-                                    info!("Resolving translation: lang='{}', key='{}'", lang, message_key);
-                                    let message = translations.get(&lang, message_key);
-                                    info!("Resolved translation: '{}'", message);
-
-                                    lock_or_recover(&state.alert_messages).push(message);
-                                    *last_alert = Instant::now();
-            state.pose_analyzer.clear_recent_results();
-                                }
+                            if decision.should_remind {
+                                let lang = lock_or_recover(&state.current_language).clone();
+                                let message_key = if is_turtle && is_shoulder {
+                                    "alert_both"
+                                } else if is_turtle {
+                                    "alert_turtle"
+                                } else {
+                                    "alert_shoulder"
+                                };
+                                let message = state.translations.get(&lang, message_key);
+                                deliver_reminder(&app_handle, &preferences, message, false);
                             }
                         }
                     }
@@ -800,46 +998,47 @@ pub fn run() {
                 }],
             ).build())
         .setup(|app| {
-            let quit = PredefinedMenuItem::quit(app, Some("Quit Pose Nudge"))?;
+            let quit = PredefinedMenuItem::quit(app, Some("Quit OnePosture"))?;
             let show = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
             let start_monitoring_item = MenuItem::with_id(app, "start_monitoring", "Start Monitoring", true, None::<&str>)?;
             let stop_monitoring_item = MenuItem::with_id(app, "stop_monitoring", "Stop Monitoring", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&start_monitoring_item, &stop_monitoring_item, &PredefinedMenuItem::separator(app)?, &show, &quit])?;
+            let test_reminder_item = MenuItem::with_id(app, "test_reminder", "Test Reminder", true, None::<&str>)?;
+            let tray_status_item = MenuItem::with_id(app, "status", "Status: Paused", false, None::<&str>)?;
+            let menu = Menu::with_items(app, &[
+                &tray_status_item,
+                &PredefinedMenuItem::separator(app)?,
+                &start_monitoring_item,
+                &stop_monitoring_item,
+                &test_reminder_item,
+                &PredefinedMenuItem::separator(app)?,
+                &show,
+                &quit,
+            ])?;
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            #[cfg(desktop)]
-            {
-                use tauri_plugin_autostart::ManagerExt;
-
-                let autostart_manager = app.autolaunch();
-                let _ = autostart_manager.enable();
-                info!("registered for autostart? {}", autostart_manager.is_enabled().unwrap_or(false));
-            }
-
-            let translations = Arc::new(Translations::new(&app.path()));
+            let translations = Arc::new(Translations::new(app.path()));
 
             let app_state = AppState {
                 pose_analyzer: Arc::new(PoseAnalyzer::new()),
-                monitoring_active: Arc::new(Mutex::new(true)),
+                monitoring_active: Arc::new(Mutex::new(false)),
                 force_capture_now: Arc::new(Mutex::new(false)),
-                last_alert_time: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(60))),
-                alert_messages: Arc::new(Mutex::new(Vec::new())),
+                reminder_engine: Arc::new(Mutex::new(ReminderEngine::new())),
+                reminder_preferences: Arc::new(Mutex::new(ReminderPreferences::default())),
                 camera: Arc::new(Mutex::new(None)),
                 selected_camera_index: Arc::new(Mutex::new(0)),
                 monitoring_interval_secs: Arc::new(Mutex::new(3)),
-                translations: translations,
+                translations,
                 current_language: Arc::new(Mutex::new("en".to_string())),
                 battery_saving_mode: Arc::new(Mutex::new(false)),
                 tray: Arc::new(Mutex::new(None)),
+                tray_status_item: Arc::new(Mutex::new(Some(tray_status_item))),
             };
             app.manage(app_state.clone());
 
-            let alert_app_handle = app.handle().clone();
-            let alert_state = app_state.clone();
-            tauri::async_runtime::spawn(async move {
-                background_alert_task(alert_app_handle, alert_state).await;
-            });
+            if let Some(dim_window) = app.get_webview_window("screen-dim") {
+                let _ = dim_window.set_ignore_cursor_events(true);
+            }
 
             let monitor_app_handle = app.handle().clone();
             let monitor_state = app_state.clone();
@@ -866,7 +1065,7 @@ pub fn run() {
 
             let tray = TrayIconBuilder::new()
                 .icon(default_icon)
-                .tooltip("Pose Nudge")
+                .tooltip("OnePosture · Paused")
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
                     let state = app.state::<AppState>();
@@ -881,6 +1080,7 @@ pub fn run() {
                             info!("'Start Monitoring' clicked");
                             *lock_or_recover(&state.monitoring_active) = true;
                             *lock_or_recover(&state.force_capture_now) = true;
+                            lock_or_recover(&state.reminder_engine).reset();
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
                                 if let Some(default_icon) = app.default_window_icon() {
                                     if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
@@ -890,12 +1090,14 @@ pub fn run() {
                                     warn!("Default window icon not found; skipping tray icon update.");
                                 }
                             }
+                            update_tray_status(&state, "Monitoring");
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
                         }
                         "stop_monitoring" => {
                             info!("'Stop Monitoring' clicked");
                             *lock_or_recover(&state.monitoring_active) = false;
                             *lock_or_recover(&state.force_capture_now) = false;
+                            lock_or_recover(&state.reminder_engine).reset();
                             stop_and_release_camera(&state, "tray stop_monitoring action");
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
                                 if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
@@ -914,14 +1116,50 @@ pub fn run() {
                                     error!("Failed to resolve icon path");
                                 }
                             }
+                            update_tray_status(&state, "Paused");
+                            for label in ["reminder", "screen-dim"] {
+                                if let Some(window) = app.get_webview_window(label) {
+                                    let _ = window.hide();
+                                }
+                            }
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
+                        }
+                        "test_reminder" => {
+                            let preferences = lock_or_recover(&state.reminder_preferences).clone();
+                            let lang = lock_or_recover(&state.current_language).clone();
+                            let message = state.translations.get(&lang, "alert_both");
+                            deliver_reminder(app, &preferences, message, true);
                         }
                         _ => {}
                     }
                 })
                 .build(app)?;
             *lock_or_recover(&app_state.tray) = Some(tray);
-            info!("Pose Nudge application initialized");
+            update_tray_status(&app_state, "Paused");
+
+            #[cfg(debug_assertions)]
+            if std::env::var_os("ONEPOSTURE_TEST_REMINDER").is_some() {
+                let test_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    sleep(Duration::from_secs(2)).await;
+                    let preferences = ReminderPreferences {
+                        native_notification: false,
+                        floating_window: true,
+                        screen_dim: true,
+                        sound: false,
+                        display_seconds: 30,
+                        ..ReminderPreferences::default()
+                    };
+                    deliver_reminder(
+                        &test_app,
+                        &preferences,
+                        "Test reminder: gently reset your posture".to_string(),
+                        true,
+                    );
+                });
+            }
+
+            info!("OnePosture application initialized");
             Ok(())
         })
         .on_window_event(|window, event| match event {
@@ -941,8 +1179,13 @@ pub fn run() {
             stop_monitoring,
             analyze_pose_data,
             get_pose_recommendations,
-            get_alert_messages,
             get_monitoring_status,
+            get_reminder_preferences,
+            set_reminder_preferences,
+            send_test_reminder,
+            dismiss_reminder_surfaces,
+            get_license_status,
+            activate_license,
             request_preview_frame,
             test_model_status,
             calibrate_user_posture,

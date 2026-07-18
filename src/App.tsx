@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { check } from '@tauri-apps/plugin-updater';
 import { invoke } from '@tauri-apps/api/core';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Dashboard from '@/components/Dashboard';
@@ -19,12 +20,14 @@ import {
 import './App.css';
 import i18n from './i18n';
 import { useTranslation } from 'react-i18next';
+import { loadReminderPreferences } from './lib/reminders';
 
 const normalizeLanguage = (lang: string | undefined): string => {
   if (!lang) return 'en';
   const lowered = lang.toLowerCase();
   if (lowered.startsWith('ko')) return 'ko';
   if (lowered.startsWith('ja')) return 'ja';
+  if (lowered.startsWith('zh-hant') || lowered.startsWith('zh-tw') || lowered.startsWith('zh-hk')) return 'zh-Hant';
   if (lowered.startsWith('zh')) return 'zh';
   if (lowered.startsWith('tr')) return 'tr';
   return 'en';
@@ -74,7 +77,7 @@ const AboutPage = () => {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <div className="flex justify-between"><span className="font-medium">{t('about.version', '버전')}</span><span>{currentVersion}</span></div>
-              <div className="flex justify-between"><span className="font-medium">{t('about.developer', '개발자')}</span><span>dduldduck</span></div>
+              <div className="flex justify-between"><span className="font-medium">{t('about.developer', '개발자')}</span><span>One Apps Studio · Pose Nudge contributors</span></div>
               <div className="flex justify-between"><span className="font-medium">{t('about.build', '빌드')}</span><span>Tauri + React</span></div>
             </div>
             <div className="pt-4 border-t">
@@ -190,6 +193,20 @@ function App() {
       shoulderSensitivity: parseInt(localStorage.getItem('pose_nudge_shoulder_sensitivity') || '2', 10),
     }).catch(console.error);
 
+    invoke('set_reminder_preferences', {
+      preferences: loadReminderPreferences(),
+    }).catch(console.error);
+
+    const ensureNotificationPermission = async () => {
+      const preferences = loadReminderPreferences();
+      const permissionAsked = localStorage.getItem('oneposture_notification_permission_requested');
+      if (preferences.native_notification && !permissionAsked && !(await isPermissionGranted())) {
+        localStorage.setItem('oneposture_notification_permission_requested', 'true');
+        await requestPermission();
+      }
+    };
+    void ensureNotificationPermission().catch(console.error);
+
   }, []);
 
   return (
@@ -199,10 +216,10 @@ function App() {
           <div className="flex items-center gap-3">
             <img
               src="/logo.png"
-              alt={t('app.logoAlt', 'Pose Nudge Logo')}
+              alt={t('app.logoAlt', 'OnePosture Logo')}
               className="w-12 h-12 rounded-lg object-cover"
             />
-            <h1 className="text-2xl font-bold">{t('app.title', 'Pose Nudge')}</h1>
+            <h1 className="text-2xl font-bold">{t('app.title', 'OnePosture')}</h1>
           </div>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2">

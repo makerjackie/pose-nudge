@@ -3,7 +3,9 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main"
+    "main",
+    "reminder",
+    "screen-dim"
   ],
   "permissions": [
     "core:default",

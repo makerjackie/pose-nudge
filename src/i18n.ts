@@ -6,10 +6,18 @@ import translationEN from './locales/en/translation.json';
 import translationKO from './locales/ko/translation.json';
 import translationJA from './locales/ja/translation.json';
 import translationZH from './locales/zh/translation.json';
+import translationZHHant from './locales/zh-Hant/translation.json';
 import translationTR from './locales/tr/translation.json';
 
 const LANGUAGE_KEY = 'pose_nudge_language';
-const SUPPORTED_LANGUAGES = ['en', 'ko', 'ja', 'zh', 'tr'];
+const SUPPORTED_LANGUAGES = ['en', 'ko', 'ja', 'zh', 'zh-Hant', 'zh-TW', 'zh-HK', 'tr'];
+const traditionalChinese = {
+  ...translationZH,
+  ...translationZHHant,
+  app: { ...translationZH.app, ...translationZHHant.app },
+  nav: { ...translationZH.nav, ...translationZHHant.nav },
+  settings: { ...translationZH.settings, ...translationZHHant.settings },
+};
 
 const resources = {
   en: {
@@ -24,6 +32,15 @@ const resources = {
   zh: {
     translation: translationZH,
   },
+  'zh-Hant': {
+    translation: traditionalChinese,
+  },
+  'zh-TW': {
+    translation: traditionalChinese,
+  },
+  'zh-HK': {
+    translation: traditionalChinese,
+  },
   tr: {
     translation: translationTR,
   },
@@ -35,8 +52,8 @@ i18n
   .init({
     resources,
     supportedLngs: SUPPORTED_LANGUAGES,
-    nonExplicitSupportedLngs: true,
-    load: 'languageOnly',
+    nonExplicitSupportedLngs: false,
+    load: 'currentOnly',
     fallbackLng: 'en',
     debug: false,
     detection: {

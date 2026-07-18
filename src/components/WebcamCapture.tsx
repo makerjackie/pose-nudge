@@ -6,6 +6,8 @@ import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { load, Store } from '@tauri-apps/plugin-store';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { loadReminderPreferences } from '@/lib/reminders';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -17,7 +19,7 @@ import {
   Target,
   CheckCircle,
   XCircle,
-  //PlayCircle,
+  PlayCircle,
   StopCircle,
   Lightbulb,
   Cpu,
@@ -28,9 +30,10 @@ import {
 interface PostureAnalysis {
   turtle_neck: boolean;
   shoulder_misalignment: boolean;
-  posture_score: number;
+  posture_score: number | null;
   recommendations: string[];
   confidence?: number;
+  reliable?: boolean;
 }
 
 interface MonitoringStatus {
@@ -199,13 +202,24 @@ const WebcamCapture: React.FC = () => {
     setCalibrationStatus('calibrating');
     setError('');
     try {
-      const imageSrc = shouldUseBackendPreview && backendPreviewFrame
-        ? backendPreviewFrame
-        : webcamRef.current?.getScreenshot();
-      if (!imageSrc) throw new Error(t('webcam.captureError', '웹캠 이미지를 캡처할 수 없습니다.'));
+      const imageSamples: string[] = [];
+      if (shouldUseBackendPreview && backendPreviewFrame) {
+        imageSamples.push(backendPreviewFrame);
+      } else {
+        for (let index = 0; index < 5; index += 1) {
+          const frame = webcamRef.current?.getScreenshot();
+          if (frame) imageSamples.push(frame);
+          if (index < 4) {
+            await new Promise((resolve) => setTimeout(resolve, 220));
+          }
+        }
+      }
+      if (imageSamples.length === 0) throw new Error(t('webcam.captureError', '웹캠 이미지를 캡처할 수 없습니다.'));
+
+      const imageSrc = imageSamples[Math.floor(imageSamples.length / 2)];
       
       const filePath = await invoke<string>('save_calibrated_image', { imageData: imageSrc });
-      await invoke('calibrate_user_posture', { imageData: imageSrc });
+      await invoke('calibrate_user_posture', { imageDataSamples: imageSamples });
       const imageUrl = convertFileSrc(filePath);
       const cacheBustedUrl = `${imageUrl}?t=${new Date().getTime()}`;
 
@@ -358,6 +372,31 @@ const WebcamCapture: React.FC = () => {
   
   const isReadyForUI = isWebcamReady && isModelInitialized;
 
+  const toggleMonitoring = async () => {
+    try {
+      if (isMonitoring) {
+        await invoke('stop_monitoring');
+        return;
+      }
+
+      if (
+        loadReminderPreferences().native_notification
+        && localStorage.getItem('oneposture_notification_permission_asked') !== 'true'
+      ) {
+        const granted = await isPermissionGranted();
+        if (!granted) {
+          await requestPermission();
+        }
+        localStorage.setItem('oneposture_notification_permission_asked', 'true');
+      }
+
+      await invoke('start_monitoring');
+    } catch (monitoringError) {
+      console.error('Failed to change monitoring state:', monitoringError);
+      setError(t('webcam.monitoringToggleError', '无法切换监测状态，请检查摄像头权限。'));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -388,7 +427,7 @@ const WebcamCapture: React.FC = () => {
                 />
               )}
               <div className={`absolute inset-0 transition-all ring-4 ring-inset pointer-events-none ${getPostureStatusColor(isMonitoring ? analysisResult?.posture_score : null)}`} />
-              {isMonitoring && analysisResult && (
+              {isMonitoring && analysisResult && analysisResult.reliable !== false && analysisResult.posture_score != null && (
                 <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm text-white p-3 rounded-lg text-left">
                   <p className="text-sm font-medium">{t('webcam.currentScore', '현재 자세 점수')}</p>
                   <p className="text-4xl font-bold">{analysisResult.posture_score}<span className="text-2xl">{t('dashboard.scoreUnit', '/100')}</span></p>
@@ -405,9 +444,15 @@ const WebcamCapture: React.FC = () => {
             </CardHeader>
             <CardContent>
               {isMonitoring && analysisResult ? (
+                analysisResult.reliable === false ? (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                    <p className="font-semibold">{t('webcam.lowConfidenceTitle', '暂时看不清姿态')}</p>
+                    <p className="mt-1 opacity-80">{t('webcam.lowConfidenceDesc', '请让头部和双肩完整出现在画面中；本帧不会计分，也不会触发提醒。')}</p>
+                  </div>
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-3">
-                    <StatusItem label="webcam.turtleNeck" isBad={analysisResult.turtle_neck} detectedText="webcam.caution" />
+                    <StatusItem label="webcam.headPosition" isBad={analysisResult.turtle_neck} detectedText="webcam.caution" />
                     <StatusItem label="webcam.shoulderMisalign" isBad={analysisResult.shoulder_misalignment} detectedText="webcam.imbalance" />
                   </div>
                   <div className="space-y-3">
@@ -428,6 +473,7 @@ const WebcamCapture: React.FC = () => {
                     )}
                   </div>
                 </div>
+                )
               ) : (
                 <div className="text-center py-10 text-muted-foreground">
                   <CameraOff className="mx-auto h-12 w-12 mb-2" />
@@ -455,8 +501,18 @@ const WebcamCapture: React.FC = () => {
                   </div>
                 )}
               </div>
+              <Button
+                onClick={toggleMonitoring}
+                className={`w-full gap-2 ${isMonitoring ? '' : 'bg-[#2f7d66] text-white hover:bg-[#276b58]'}`}
+                variant={isMonitoring ? 'outline' : 'default'}
+              >
+                {isMonitoring ? <StopCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
+                {isMonitoring
+                  ? t('webcam.stopMonitoring', '停止监测')
+                  : t('webcam.startMonitoring', '开始监测')}
+              </Button>
               <p className="text-xs text-center text-muted-foreground pt-1">
-                {t('webcam.trayControlGuide', '시스템 트레이 아이콘으로 모니터링을 제어하세요.')}
+                {t('webcam.trayControlGuide', '也可以从菜单栏快速暂停或继续。')}
               </p>
               
               <div className="flex justify-around text-sm pt-2">
@@ -484,7 +540,7 @@ const WebcamCapture: React.FC = () => {
               <Button onClick={handleCalibrate} disabled={!isReadyForUI || calibrationStatus === 'calibrating'} className="w-full" variant="outline">
                 {calibrationStatus === 'calibrating' ? t('webcam.saving', '저장 중...') : t('webcam.setCurrentPosture', '현재 자세를 기준으로 설정')}
               </Button>
-              <p className="text-xs text-muted-foreground mt-2">{t('webcam.calibrationGuide', '바른 자세를 취한 후 버튼을 눌러 기준점을 설정하세요.')}</p>
+              <p className="text-xs text-muted-foreground mt-2">{t('webcam.calibrationGuide', '保持自然坐直约 1 秒；OnePosture 会用多帧中位数建立基准。')}</p>
               {calibrationStatus === 'success' && <p className="text-xs text-green-600 dark:text-green-400 mt-1">✅ {t('webcam.saveSuccess', '성공적으로 저장되었습니다.')}</p>}
               {calibrationStatus === 'error' && <p className="text-xs text-destructive mt-1">❌ {t('webcam.saveError', '저장에 실패했습니다.')}</p>}
               {calibratedImage && (

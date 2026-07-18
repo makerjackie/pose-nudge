@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Pose Nudge",
-  "version": "1.5.1",
-  "identifier": "com.dduldduck.pose-nudge",
+  "productName": "OnePosture",
+  "version": "2.0.0",
+  "identifier": "studio.oneapps.oneposture",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -10,15 +10,49 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Pose Nudge - 자세 교정 도우미",
+        "label": "main",
+        "title": "OnePosture",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
         "minHeight": 600,
         "center": true,
         "resizable": true
+      },
+      {
+        "label": "reminder",
+        "url": "index.html?surface=reminder",
+        "title": "OnePosture Reminder",
+        "width": 420,
+        "height": 108,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "shadow": false
+      },
+      {
+        "label": "screen-dim",
+        "url": "index.html?surface=dim",
+        "title": "OnePosture Screen Reminder",
+        "width": 800,
+        "height": 600,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "shadow": false
       }
     ],
     "security": {
@@ -59,9 +93,9 @@
       ]
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFGMDlDMDJDODcxRDgyOEIKUldTTGdoMkhMTUFKci9Hc296TXJvdSt0Mlp6WFlMYVV1M0hCaXVRVm5ublpIYUxLeEd1R3M0cVEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4MDU3QTE4OERCQzdEOEEKUldTS2ZieU5HSG9GS0ZNQzJqREhBRDNmNkdzTzVtZkozZEVqU1NvdCtjY2NqczBocTQxMHBsbzIK",
       "endpoints": [
-        "https://github.com/dduldduck/pose-nudge/releases/latest/download/latest.json"
+        "https://github.com/makerjackie/pose-nudge/releases/latest/download/latest.json"
       ]
     }
   }
