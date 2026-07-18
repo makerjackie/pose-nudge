@@ -1,5 +1,17 @@
 {
   "alert_turtle": "거북목이 감지되었습니다. 목을 곧게 펴주세요!",
   "alert_shoulder": "어깨 정렬이 불량합니다. 등받이에 등을 기대주세요!",
-  "alert_both": "거북목과 어깨 기울어짐이 감지되었습니다."
+  "alert_both": "거북목과 어깨 기울어짐이 감지되었습니다.",
+  "tray_start_monitoring": "모니터링 시작",
+  "tray_stop_monitoring": "모니터링 중지",
+  "tray_test_reminder": "알림 테스트",
+  "tray_show_app": "앱 보기",
+  "tray_quit": "OnePosture 종료",
+  "tray_status_label": "상태",
+  "tray_status_paused": "일시 중지됨",
+  "tray_status_monitoring": "모니터링 중",
+  "tray_status_camera_unclear": "카메라 화면이 불분명함",
+  "tray_status_posture_good": "자세 양호",
+  "tray_status_posture_drifting": "자세가 흐트러지는 중",
+  "tray_status_reminder_delivered": "알림 전송됨"
 }

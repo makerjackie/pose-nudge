@@ -1,5 +1,17 @@
 {
-    "alert_turtle": "Kaplumbağa boynu tespit edildi. Lütfen boynunuzu düzeltin!",
-    "alert_shoulder": "Omuz hizalaması bozuk. Lütfen sandalyeye yaslanın!",
-    "alert_both": "Kaplumbağa boynu ve omuz eğikliği tespit edildi."
+  "alert_turtle": "Kaplumbağa boynu tespit edildi. Lütfen boynunuzu düzeltin!",
+  "alert_shoulder": "Omuz hizalaması bozuk. Lütfen sandalyeye yaslanın!",
+  "alert_both": "Kaplumbağa boynu ve omuz eğikliği tespit edildi.",
+  "tray_start_monitoring": "İzlemeyi Başlat",
+  "tray_stop_monitoring": "İzlemeyi Durdur",
+  "tray_test_reminder": "Hatırlatıcıyı Test Et",
+  "tray_show_app": "Uygulamayı Göster",
+  "tray_quit": "OnePosture'dan Çık",
+  "tray_status_label": "Durum",
+  "tray_status_paused": "Duraklatıldı",
+  "tray_status_monitoring": "İzleniyor",
+  "tray_status_camera_unclear": "Kamera görüntüsü belirsiz",
+  "tray_status_posture_good": "Duruş iyi",
+  "tray_status_posture_drifting": "Duruş bozuluyor",
+  "tray_status_reminder_delivered": "Hatırlatıcı gönderildi"
 }

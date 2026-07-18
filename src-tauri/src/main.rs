@@ -130,6 +130,38 @@ struct CameraDetail {
     name: String,
 }
 
+#[derive(Clone, Copy)]
+enum TrayStatus {
+    Paused,
+    Monitoring,
+    CameraUnclear,
+    PostureGood,
+    PostureDrifting,
+    ReminderDelivered,
+}
+
+impl TrayStatus {
+    fn translation_key(self) -> &'static str {
+        match self {
+            Self::Paused => "tray_status_paused",
+            Self::Monitoring => "tray_status_monitoring",
+            Self::CameraUnclear => "tray_status_camera_unclear",
+            Self::PostureGood => "tray_status_posture_good",
+            Self::PostureDrifting => "tray_status_posture_drifting",
+            Self::ReminderDelivered => "tray_status_reminder_delivered",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct TrayMenuItems {
+    start_monitoring: MenuItem<tauri::Wry>,
+    stop_monitoring: MenuItem<tauri::Wry>,
+    test_reminder: MenuItem<tauri::Wry>,
+    show: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
 #[derive(Clone)]
 struct AppState {
     pose_analyzer: Arc<PoseAnalyzer>,
@@ -145,6 +177,8 @@ struct AppState {
     battery_saving_mode: Arc<Mutex<bool>>,
     tray: Arc<Mutex<Option<TrayIcon>>>,
     tray_status_item: Arc<Mutex<Option<MenuItem<tauri::Wry>>>>,
+    tray_menu_items: Arc<Mutex<Option<TrayMenuItems>>>,
+    tray_status: Arc<Mutex<TrayStatus>>,
 }
 
 fn ensure_continuous_camera_stream(state: &AppState) -> bool {
@@ -271,7 +305,7 @@ async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<
             warn!("Default window icon not found.");
         }
     }
-    update_tray_status(&state, "Monitoring");
+    update_tray_status(&state, TrayStatus::Monitoring);
     let _ = app.emit(
         "monitoring-state-changed",
         &serde_json::json!({ "active": true }),
@@ -326,7 +360,7 @@ async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(
             error!("Failed to resolve icon path");
         }
     }
-    update_tray_status(&state, "Paused");
+    update_tray_status(&state, TrayStatus::Paused);
     for label in ["reminder", "screen-dim"] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.hide();
@@ -431,13 +465,42 @@ fn cover_primary_monitor(app: &AppHandle) {
     let _ = window.set_size(*monitor.size());
 }
 
-fn update_tray_status(state: &AppState, label: &str) {
+fn update_tray_status(state: &AppState, status: TrayStatus) {
+    *lock_or_recover(&state.tray_status) = status;
+    let lang = lock_or_recover(&state.current_language).clone();
+    let label = state.translations.get(&lang, status.translation_key());
+    let status_label = state.translations.get(&lang, "tray_status_label");
+
     if let Some(item) = lock_or_recover(&state.tray_status_item).as_ref() {
-        let _ = item.set_text(format!("Status: {}", label));
+        let _ = item.set_text(format!("{}: {}", status_label, label));
     }
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
         let _ = tray.set_tooltip(Some(format!("OnePosture · {}", label)));
     }
+}
+
+fn update_tray_menu_language(state: &AppState) {
+    let lang = lock_or_recover(&state.current_language).clone();
+    if let Some(items) = lock_or_recover(&state.tray_menu_items).as_ref() {
+        let _ = items
+            .start_monitoring
+            .set_text(state.translations.get(&lang, "tray_start_monitoring"));
+        let _ = items
+            .stop_monitoring
+            .set_text(state.translations.get(&lang, "tray_stop_monitoring"));
+        let _ = items
+            .test_reminder
+            .set_text(state.translations.get(&lang, "tray_test_reminder"));
+        let _ = items
+            .show
+            .set_text(state.translations.get(&lang, "tray_show_app"));
+        let _ = items
+            .quit
+            .set_text(state.translations.get(&lang, "tray_quit"));
+    }
+
+    let status = *lock_or_recover(&state.tray_status);
+    update_tray_status(state, status);
 }
 
 fn deliver_reminder(
@@ -677,6 +740,7 @@ async fn set_current_language(state: State<'_, AppState>, lang: String) -> Resul
     let normalized = normalize_language_code(&lang);
     info!("Current language changed: {} -> {}", lang, normalized);
     *lock_or_recover(&state.current_language) = normalized;
+    update_tray_menu_language(&state);
     Ok(())
 }
 
@@ -896,14 +960,16 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
 
                             match decision.state {
                                 ReminderState::WaitingForSignal => {
-                                    update_tray_status(&state, "Camera unclear")
+                                    update_tray_status(&state, TrayStatus::CameraUnclear)
                                 }
-                                ReminderState::Good => update_tray_status(&state, "Posture good"),
+                                ReminderState::Good => {
+                                    update_tray_status(&state, TrayStatus::PostureGood)
+                                }
                                 ReminderState::Drifting => {
-                                    update_tray_status(&state, "Posture drifting")
+                                    update_tray_status(&state, TrayStatus::PostureDrifting)
                                 }
                                 ReminderState::Cooldown => {
-                                    update_tray_status(&state, "Reminder delivered")
+                                    update_tray_status(&state, TrayStatus::ReminderDelivered)
                                 }
                             }
 
@@ -998,7 +1064,7 @@ pub fn run() {
                 }],
             ).build())
         .setup(|app| {
-            let quit = PredefinedMenuItem::quit(app, Some("Quit OnePosture"))?;
+            let quit = MenuItem::with_id(app, "quit", "Quit OnePosture", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
             let start_monitoring_item = MenuItem::with_id(app, "start_monitoring", "Start Monitoring", true, None::<&str>)?;
             let stop_monitoring_item = MenuItem::with_id(app, "stop_monitoring", "Stop Monitoring", true, None::<&str>)?;
@@ -1033,6 +1099,14 @@ pub fn run() {
                 battery_saving_mode: Arc::new(Mutex::new(false)),
                 tray: Arc::new(Mutex::new(None)),
                 tray_status_item: Arc::new(Mutex::new(Some(tray_status_item))),
+                tray_menu_items: Arc::new(Mutex::new(Some(TrayMenuItems {
+                    start_monitoring: start_monitoring_item,
+                    stop_monitoring: stop_monitoring_item,
+                    test_reminder: test_reminder_item,
+                    show,
+                    quit,
+                }))),
+                tray_status: Arc::new(Mutex::new(TrayStatus::Paused)),
             };
             app.manage(app_state.clone());
 
@@ -1090,7 +1164,7 @@ pub fn run() {
                                     warn!("Default window icon not found; skipping tray icon update.");
                                 }
                             }
-                            update_tray_status(&state, "Monitoring");
+                            update_tray_status(&state, TrayStatus::Monitoring);
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
                         }
                         "stop_monitoring" => {
@@ -1116,7 +1190,7 @@ pub fn run() {
                                     error!("Failed to resolve icon path");
                                 }
                             }
-                            update_tray_status(&state, "Paused");
+                            update_tray_status(&state, TrayStatus::Paused);
                             for label in ["reminder", "screen-dim"] {
                                 if let Some(window) = app.get_webview_window(label) {
                                     let _ = window.hide();
@@ -1135,7 +1209,7 @@ pub fn run() {
                 })
                 .build(app)?;
             *lock_or_recover(&app_state.tray) = Some(tray);
-            update_tray_status(&app_state, "Paused");
+            update_tray_status(&app_state, TrayStatus::Paused);
 
             #[cfg(debug_assertions)]
             if std::env::var_os("ONEPOSTURE_TEST_REMINDER").is_some() {

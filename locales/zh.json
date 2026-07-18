@@ -1,5 +1,17 @@
 {
   "alert_turtle": "检测到龟颈。请伸直脖子！",
   "alert_shoulder": "肩膀对齐不良。请靠在椅背上！",
-  "alert_both": "检测到龟颈和肩膀倾斜。"
+  "alert_both": "检测到龟颈和肩膀倾斜。",
+  "tray_start_monitoring": "开始监控",
+  "tray_stop_monitoring": "停止监控",
+  "tray_test_reminder": "测试提醒",
+  "tray_show_app": "显示应用",
+  "tray_quit": "退出 OnePosture",
+  "tray_status_label": "状态",
+  "tray_status_paused": "已暂停",
+  "tray_status_monitoring": "监控中",
+  "tray_status_camera_unclear": "摄像头画面不清晰",
+  "tray_status_posture_good": "姿势良好",
+  "tray_status_posture_drifting": "姿势正在偏移",
+  "tray_status_reminder_delivered": "已发送提醒"
 }

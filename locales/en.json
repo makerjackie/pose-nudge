@@ -1,5 +1,17 @@
 {
   "alert_turtle": "Turtle neck detected. Please straighten your neck!",
   "alert_shoulder": "Shoulder alignment is poor. Please lean back against the chair!",
-  "alert_both": "Turtle neck and shoulder tilt detected."
+  "alert_both": "Turtle neck and shoulder tilt detected.",
+  "tray_start_monitoring": "Start Monitoring",
+  "tray_stop_monitoring": "Stop Monitoring",
+  "tray_test_reminder": "Test Reminder",
+  "tray_show_app": "Show App",
+  "tray_quit": "Quit OnePosture",
+  "tray_status_label": "Status",
+  "tray_status_paused": "Paused",
+  "tray_status_monitoring": "Monitoring",
+  "tray_status_camera_unclear": "Camera unclear",
+  "tray_status_posture_good": "Posture good",
+  "tray_status_posture_drifting": "Posture drifting",
+  "tray_status_reminder_delivered": "Reminder delivered"
 }

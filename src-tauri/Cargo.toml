@@ -1,6 +1,6 @@
 [package]
 name = "oneposture"
-version = "2.0.0"
+version = "2.0.1"
 description = "A privacy-first posture companion with reliable reminders"
 authors = ["One Apps Studio", "Pose Nudge contributors"]
 edition = "2021"

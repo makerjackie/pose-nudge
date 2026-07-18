@@ -1,5 +1,17 @@
 {
   "alert_turtle": "偵測到頸部前傾。請伸直脖子！",
   "alert_shoulder": "肩膀對齊不良。請靠在椅背上！",
-  "alert_both": "偵測到頸部前傾和肩膀傾斜。"
+  "alert_both": "偵測到頸部前傾和肩膀傾斜。",
+  "tray_start_monitoring": "開始監控",
+  "tray_stop_monitoring": "停止監控",
+  "tray_test_reminder": "測試提醒",
+  "tray_show_app": "顯示應用程式",
+  "tray_quit": "結束 OnePosture",
+  "tray_status_label": "狀態",
+  "tray_status_paused": "已暫停",
+  "tray_status_monitoring": "監控中",
+  "tray_status_camera_unclear": "攝影機畫面不清晰",
+  "tray_status_posture_good": "姿勢良好",
+  "tray_status_posture_drifting": "姿勢正在偏移",
+  "tray_status_reminder_delivered": "已傳送提醒"
 }

@@ -1,5 +1,17 @@
 {
   "alert_turtle": "カメ首が検知されました。首をまっすぐに伸ばしてください！",
   "alert_shoulder": "肩の位置が悪いです。背もたれに背中を寄せてください！",
-  "alert_both": "カメ首と肩の傾きが検知されました。"
+  "alert_both": "カメ首と肩の傾きが検知されました。",
+  "tray_start_monitoring": "モニタリング開始",
+  "tray_stop_monitoring": "モニタリング停止",
+  "tray_test_reminder": "リマインダーをテスト",
+  "tray_show_app": "アプリを表示",
+  "tray_quit": "OnePosture を終了",
+  "tray_status_label": "状態",
+  "tray_status_paused": "一時停止中",
+  "tray_status_monitoring": "モニタリング中",
+  "tray_status_camera_unclear": "カメラ映像が不鮮明",
+  "tray_status_posture_good": "姿勢は良好",
+  "tray_status_posture_drifting": "姿勢が崩れています",
+  "tray_status_reminder_delivered": "リマインダー送信済み"
 }
