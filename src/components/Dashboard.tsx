@@ -1,282 +1,208 @@
-// src/components/Dashboard.tsx
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { getDb } from '@/lib/db';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
-import { Activity, Bell, Clock, Target, AlertCircle, CheckCircle, RefreshCw, Sparkles, LineChart } from 'lucide-react';
-import { ResponsiveContainer, LineChart as RechartsLineChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line } from 'recharts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isPermissionGranted } from '@tauri-apps/plugin-notification';
+import {
+  ArrowRight,
+  BellRing,
+  Camera,
+  Check,
+  Clock3,
+  Eye,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Target,
+} from 'lucide-react';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { useTranslation } from 'react-i18next';
+import { getDb } from '@/lib/db';
+import { loadReminderPreferences } from '@/lib/reminders';
+
 interface DashboardStats {
-  total_sessions: number;
-  average_posture_score: number;
-  detection_count_today: number;
-  session_time: number;
-  good_posture_time: number;
+  totalSessions: number;
+  averageScore: number;
+  detectionCountToday: number;
+  sessionTime: number;
+  goodPostureTime: number;
 }
-
-const MONITORING_INTERVAL_KEY = 'pose_nudge_monitoring_interval';
-const BATTERY_SAVING_MODE_KEY = 'pose_nudge_battery_saving_mode';
-
-const resolveSecondsPerRecord = (): number => {
-  const intervalRaw = Number.parseInt(localStorage.getItem(MONITORING_INTERVAL_KEY) || '3', 10);
-  const safeInterval = Number.isFinite(intervalRaw) && intervalRaw > 0 ? intervalRaw : 3;
-  const batterySavingMode = localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true';
-  return safeInterval * (batterySavingMode ? 60 : 1);
-};
 
 interface DailyScore {
   name: string;
   score: number;
 }
 
-const StatCard: React.FC<{ icon: React.ReactNode; title: string; value: string | number; description: string; }> = ({ icon, title, value, description }) => (
-  <Card>
-    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-      <CardTitle className="text-sm font-medium">{title}</CardTitle>
-      {icon}
-    </CardHeader>
-    <CardContent>
-      <div className="text-2xl font-bold">{value}</div>
-      <p className="text-xs text-muted-foreground">{description}</p>
-    </CardContent>
-  </Card>
-);
+const resolveSecondsPerRecord = (): number => {
+  const raw = Number.parseInt(localStorage.getItem('pose_nudge_monitoring_interval') || '3', 10);
+  const interval = Number.isFinite(raw) && raw > 0 ? raw : 3;
+  return interval * (localStorage.getItem('pose_nudge_battery_saving_mode') === 'true' ? 60 : 1);
+};
 
+const formatMinutes = (minutes: number, t: ReturnType<typeof useTranslation>['t']) => {
+  if (minutes < 60) return t('dashboard.timeFormat.minutes', { count: minutes });
+  return t('dashboard.timeFormat.hoursMinutes', { hours: Math.floor(minutes / 60), minutes: minutes % 60 });
+};
 
-const Dashboard: React.FC = () => {
+const Dashboard = ({ isMonitoring, onOpenMonitoring }: { isMonitoring: boolean; onOpenMonitoring: () => void }) => {
   const { t } = useTranslation();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [stats, setStats] = useState<DashboardStats>({
+    totalSessions: 0,
+    averageScore: 0,
+    detectionCountToday: 0,
+    sessionTime: 0,
+    goodPostureTime: 0,
+  });
   const [chartData, setChartData] = useState<DailyScore[]>([]);
-  const recommendations = [
-    "tip1",
-    "tip2",
-    "tip3",
-    "tip4",
-    "tip5"
-  ];
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>('');
+  const [notificationsReady, setNotificationsReady] = useState(false);
 
-  const loadDashboardData = useCallback(async () => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      setError('');
       const db = await getDb();
-
       const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-      const sixDaysAgo = Math.floor(new Date(new Date().setDate(new Date().getDate() - 5)).setHours(0,0,0,0) / 1000);
-
-      const [statsResult, chartResult] = await Promise.all([
+      const sixDaysAgo = Math.floor(new Date(new Date().setDate(new Date().getDate() - 5)).setHours(0, 0, 0, 0) / 1000);
+      const [rows, trend] = await Promise.all([
         db.select<any[]>(`
-            SELECT
-                (SELECT COUNT(DISTINCT date(timestamp, 'unixepoch')) FROM posture_log) as total_sessions,
-                AVG(CASE WHEN timestamp >= $1 THEN score ELSE NULL END) as average_posture_score,
-                SUM(CASE WHEN (is_turtle_neck = 1 OR is_shoulder_misaligned = 1) AND timestamp >= $1 THEN 1 ELSE 0 END) as detection_count_today,
-                COUNT(CASE WHEN timestamp >= $1 THEN 1 ELSE NULL END) as records_today,
-                SUM(CASE WHEN score >= 80 AND timestamp >= $1 THEN 1 ELSE 0 END) as good_records_today
-            FROM posture_log
+          SELECT
+            (SELECT COUNT(DISTINCT date(timestamp, 'unixepoch')) FROM posture_log) AS total_sessions,
+            AVG(CASE WHEN timestamp >= $1 THEN score ELSE NULL END) AS average_score,
+            SUM(CASE WHEN (is_turtle_neck = 1 OR is_shoulder_misaligned = 1) AND timestamp >= $1 THEN 1 ELSE 0 END) AS detections_today,
+            COUNT(CASE WHEN timestamp >= $1 THEN 1 ELSE NULL END) AS records_today,
+            SUM(CASE WHEN score >= 80 AND timestamp >= $1 THEN 1 ELSE 0 END) AS good_records_today
+          FROM posture_log
         `, [todayStart]),
         db.select<DailyScore[]>(`
-            SELECT
-                strftime('%m-%d', datetime(timestamp, 'unixepoch', 'localtime')) as name,
-                ROUND(AVG(score)) as score
-            FROM posture_log
-            WHERE timestamp >= $1
-            GROUP BY name
-            ORDER BY name ASC
-            LIMIT 6
+          SELECT strftime('%m-%d', datetime(timestamp, 'unixepoch', 'localtime')) AS name,
+                 ROUND(AVG(score)) AS score
+          FROM posture_log
+          WHERE timestamp >= $1
+          GROUP BY name
+          ORDER BY name ASC
+          LIMIT 6
         `, [sixDaysAgo]),
-        invoke<string[]>('get_pose_recommendations')
       ]);
-
-      const rawStats = statsResult[0] || {};
+      const row = rows[0] || {};
       const secondsPerRecord = resolveSecondsPerRecord();
-
       setStats({
-          total_sessions: rawStats.total_sessions || 0,
-          average_posture_score: Math.round(rawStats.average_posture_score || 0),
-          detection_count_today: rawStats.detection_count_today || 0,
-          session_time: Math.floor(((rawStats.records_today || 0) * secondsPerRecord) / 60),
-          good_posture_time: Math.floor(((rawStats.good_records_today || 0) * secondsPerRecord) / 60)
+        totalSessions: row.total_sessions || 0,
+        averageScore: Math.round(row.average_score || 0),
+        detectionCountToday: row.detections_today || 0,
+        sessionTime: Math.floor(((row.records_today || 0) * secondsPerRecord) / 60),
+        goodPostureTime: Math.floor(((row.good_records_today || 0) * secondsPerRecord) / 60),
       });
-
-      setChartData(chartResult);
-
-    } catch (err) {
-      console.error('Failed to load dashboard data:', err);
-      setError(t('dashboard.loadingError'));
+      setChartData(trend);
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, []);
 
   useEffect(() => {
-    loadDashboardData();
-  }, [loadDashboardData]);
+    void loadData();
+    isPermissionGranted().then(setNotificationsReady).catch(() => setNotificationsReady(false));
+  }, [loadData]);
 
-  const formatTime = (minutes: number): string => {
-    if (minutes < 60) return t('dashboard.timeFormat.minutes', { count: minutes });
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return t('dashboard.timeFormat.hoursMinutes', { hours, minutes: mins });
-  };
+  const goodShare = stats.sessionTime > 0 ? Math.round((stats.goodPostureTime / stats.sessionTime) * 100) : 0;
+  const reminderChannels = useMemo(() => {
+    const prefs = loadReminderPreferences();
+    return [prefs.native_notification, prefs.floating_window, prefs.screen_dim].filter(Boolean).length;
+  }, []);
 
-  const getScoreColor = (score: number): string => {
-    if (score >= 80) return 'text-emerald-500';
-    if (score >= 60) return 'text-amber-500';
-    return 'text-red-500';
-  };
-  
-  const getScoreRingColor = (score: number): string => {
-    if (score >= 80) return 'stroke-emerald-500';
-    if (score >= 60) return 'stroke-amber-500';
-    return 'stroke-red-500';
-  };
+  const scoreMessage = stats.averageScore >= 80
+    ? t('dashboard.motivation.excellent')
+    : stats.averageScore >= 60
+      ? t('dashboard.motivation.good')
+      : t('dashboard.motivation.bad');
 
-  const getMotivationalMessage = (score: number): string => {
-    if (score >= 80) return t('dashboard.motivation.excellent');
-    if (score >= 60) return t('dashboard.motivation.good');
-    return t('dashboard.motivation.bad');
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
+  const tips = ['tip1', 'tip2', 'tip3'];
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={loadDashboardData} className="gap-2">
-          <RefreshCw className="h-4 w-4" />
-          {t('dashboard.refresh')}
-        </Button>
-      </div>
-      
-      {error && !stats && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {stats ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-6">
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Target className="h-5 w-5 text-blue-600" />
-                  {t('dashboard.scoreTitle')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center justify-center space-y-4">
-                <div className="relative h-48 w-48">
-                  <svg className="h-full w-full" viewBox="0 0 100 100">
-                    <title>{t('dashboard.scoreTitle')}</title>
-                    <circle className="stroke-current text-muted" strokeWidth="10" cx="50" cy="50" r="40" fill="transparent"></circle>
-                    <circle
-                      className={`stroke-current ${getScoreRingColor(stats.average_posture_score)} transition-all duration-500`}
-                      strokeWidth="10" cx="50" cy="50" r="40" fill="transparent"
-                      strokeDasharray={2 * Math.PI * 40}
-                      strokeDashoffset={2 * Math.PI * 40 * (1 - (stats.average_posture_score || 0) / 100)}
-                      strokeLinecap="round" transform="rotate(-90 50 50)"
-                    ></circle>
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className={`text-5xl font-bold ${getScoreColor(stats.average_posture_score)}`}>
-                      {stats.average_posture_score}
-                    </span>
-                    <span className="text-sm text-muted-foreground">{t('dashboard.scoreUnit')}</span>
-                  </div>
-                </div>
-                <p className="text-center text-muted-foreground px-4">
-                  {getMotivationalMessage(stats.average_posture_score)}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-yellow-500" /> {t('dashboard.tipsTitle')}</CardTitle></CardHeader>
-              <CardContent>
-                {recommendations.length > 0 ? (
-                  <ul className="space-y-3">
-                    {recommendations.map((rec) => (
-                      <li key={rec} className="flex items-start gap-3">
-                        <CheckCircle className="h-5 w-5 text-emerald-500 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-muted-foreground">{t(`dashboard.tips.${rec}`, rec)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-center text-muted-foreground py-4">{t('dashboard.noTips')}</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              <StatCard icon={<Activity />} title={t('dashboard.stats.totalSessions')} value={stats.total_sessions} description={t('dashboard.stats.totalSessionsDesc')} />
-              <StatCard icon={<Bell />} title={t('dashboard.stats.todayDetectionCount')} value={stats.detection_count_today} description={t('dashboard.stats.todayDetectionCountDesc')} />
-              <StatCard icon={<Clock />} title={t('dashboard.stats.totalTime')} value={formatTime(stats.session_time)} description={t('dashboard.stats.totalTimeDesc')} />
-            </div>
-
-            <Card>
-              <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><LineChart className="h-5 w-5" /> {t('dashboard.chartTitle')}</CardTitle>
-                  <CardDescription>{t('dashboard.chartDesc')}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <RechartsLineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" stroke="#888888" fontSize={12} />
-                    <YAxis stroke="#888888" fontSize={12} domain={[0, 100]} />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="score" stroke="#10b981" strokeWidth={2} name={t('dashboard.chartLegend')} />
-                  </RechartsLineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader><CardTitle>{t('dashboard.analysisTitle')}</CardTitle></CardHeader>
-              <CardContent className="space-y-4">
-                  <div>
-                      <div className="flex justify-between mb-1">
-                          <span className="text-sm font-medium text-emerald-600">{t('dashboard.goodPosture')}</span>
-                          <span className="text-sm font-medium text-emerald-600">{formatTime(stats.good_posture_time)}</span>
-                      </div>
-                      <Progress value={stats.session_time > 0 ? (stats.good_posture_time / stats.session_time) * 100 : 0} className="[&>div]:bg-green-500 dark:[&>div]:bg-green-400" />
-                  </div>
-                  <div>
-                      <div className="flex justify-between mb-1">
-                          <span className="text-sm font-medium text-red-600">{t('dashboard.badPosture')}</span>
-                          <span className="text-sm font-medium text-red-600">{formatTime(stats.session_time - stats.good_posture_time)}</span>
-                      </div>
-                      <Progress value={stats.session_time > 0 ? ((stats.session_time - stats.good_posture_time) / stats.session_time) * 100 : 0} className="[&>div]:bg-red-500 dark:[&>div]:bg-red-400" />
-                  </div>
-              </CardContent>
-            </Card>
-          </div>
+    <section className="page-stack dashboard-page">
+      <header className="page-heading dashboard-heading">
+        <div>
+          <p className="eyebrow">{t('dashboard.eyebrow', 'Your posture, gently guided')}</p>
+          <h1>{t('dashboard.title', 'A calmer way to sit well')}</h1>
+          <p>{t('dashboard.subtitle', 'OnePosture watches for sustained posture drift and only nudges you when the signal is reliable.')}</p>
         </div>
-      ) : (
-        !error && (
-            <div className="text-center py-20">
-                <p className="text-muted-foreground">{t('dashboard.noData')}</p>
-            </div>
-        )
-      )}
-    </div>
+        <button type="button" className="icon-action" onClick={() => void loadData()} aria-label={t('dashboard.refresh')}>
+          <RefreshCw className={loading ? 'is-spinning' : ''} />
+        </button>
+      </header>
+
+      <article className={`posture-hero ${isMonitoring ? 'is-live' : ''}`}>
+        <div className="hero-copy">
+          <span className="live-indicator"><i />{isMonitoring ? t('dashboard.live', 'Monitoring now') : t('dashboard.paused', 'Ready when you are')}</span>
+          <h2>{isMonitoring ? t('dashboard.liveTitle', 'Your posture field is active') : t('dashboard.pausedTitle', 'Start a focused posture session')}</h2>
+          <p>{isMonitoring ? t('dashboard.liveDesc', 'You can close this window. OnePosture keeps working from the menu bar.') : t('dashboard.pausedDesc', 'Preview the camera, set a comfortable baseline, then let OnePosture stay quietly in the menu bar.')}</p>
+          <button type="button" className="hero-action" onClick={onOpenMonitoring}>
+            <Camera />{t('dashboard.openMonitoring', 'Open live posture')}<ArrowRight />
+          </button>
+        </div>
+        <div className="score-field" aria-label={t('dashboard.scoreTitle')}>
+          <div className="score-axis"><span /><span /><span /></div>
+          <strong>{stats.averageScore || '—'}</strong>
+          <span>{t('dashboard.scoreUnit')}</span>
+          <small>{scoreMessage}</small>
+        </div>
+      </article>
+
+      <div className="readiness-strip" aria-label={t('dashboard.readiness', 'Readiness')}>
+        <div><span className="readiness-icon"><Eye /></span><p><strong>{t('dashboard.localAnalysis', 'Local analysis')}</strong><small>{t('dashboard.localAnalysisDesc', 'Frames stay on this device')}</small></p><Check /></div>
+        <div><span className="readiness-icon"><BellRing /></span><p><strong>{t('dashboard.reminderSetup', 'Reminder coverage')}</strong><small>{t('dashboard.reminderSetupDesc', '{{count}} channels enabled', { count: reminderChannels })}</small></p><Check /></div>
+        <div><span className="readiness-icon"><ShieldCheck /></span><p><strong>{t('dashboard.systemNotice', 'System notification')}</strong><small>{notificationsReady ? t('dashboard.permissionReady', 'Permission ready') : t('dashboard.permissionOptional', 'Optional — floating reminders still work')}</small></p><span className={notificationsReady ? 'state-ready' : 'state-optional'}>{notificationsReady ? t('dashboard.ready', 'Ready') : t('dashboard.optional', 'Optional')}</span></div>
+      </div>
+
+      <div className="dashboard-grid">
+        <section className="insight-card snapshot-card">
+          <div className="section-heading"><div><p className="eyebrow">{t('dashboard.today', 'Today')}</p><h2>{t('dashboard.snapshot', 'Posture snapshot')}</h2></div><Target /></div>
+          <div className="snapshot-metric"><strong>{goodShare}%</strong><span>{t('dashboard.goodPosture', 'Good posture')}</span></div>
+          <div className="snapshot-bar"><span style={{ width: `${goodShare}%` }} /></div>
+          <div className="metric-row">
+            <div><strong>{formatMinutes(stats.sessionTime, t)}</strong><span><Clock3 />{t('dashboard.stats.totalTime', 'Session time')}</span></div>
+            <div><strong>{stats.detectionCountToday}</strong><span><BellRing />{t('dashboard.stats.todayDetectionCount', 'Posture drifts')}</span></div>
+            <div><strong>{stats.totalSessions}</strong><span><Target />{t('dashboard.stats.totalSessions', 'Days tracked')}</span></div>
+          </div>
+        </section>
+
+        <section className="insight-card trend-card">
+          <div className="section-heading"><div><p className="eyebrow">{t('dashboard.lastSixDays', 'Last six days')}</p><h2>{t('dashboard.chartTitle')}</h2></div></div>
+          {chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={230}>
+              <AreaChart data={chartData} margin={{ top: 18, right: 8, left: -24, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="postureArea" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2f765e" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="#2f765e" stopOpacity={0.01} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} stroke="#dbe3db" strokeDasharray="4 6" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={11} />
+                <YAxis domain={[0, 100]} axisLine={false} tickLine={false} fontSize={11} />
+                <Tooltip contentStyle={{ borderRadius: 14, border: '1px solid #dbe3db' }} />
+                <Area type="monotone" dataKey="score" stroke="#1f644e" strokeWidth={3} fill="url(#postureArea)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="chart-empty"><span><Target /></span><strong>{t('dashboard.chartEmptyTitle', 'Your trend starts with the first session')}</strong><p>{t('dashboard.chartEmptyDesc', 'A few posture checks are enough to begin drawing a useful pattern.')}</p></div>
+          )}
+        </section>
+      </div>
+
+      <section className="micro-coaching">
+        <div className="section-heading"><div><p className="eyebrow">{t('dashboard.tipsTitle')}</p><h2>{t('dashboard.coachingTitle', 'Small resets, lasting comfort')}</h2></div><Sparkles /></div>
+        <div className="coaching-grid">
+          {tips.map((tip, index) => <div key={tip}><span>0{index + 1}</span><p>{t(`dashboard.tips.${tip}`)}</p></div>)}
+        </div>
+      </section>
+    </section>
   );
 };
 

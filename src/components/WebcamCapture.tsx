@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import Webcam from 'react-webcam';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -8,24 +8,18 @@ import { platform } from '@tauri-apps/plugin-os';
 import { load, Store } from '@tauri-apps/plugin-store';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { loadReminderPreferences } from '@/lib/reminders';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Camera,
   CameraOff,
   Activity,
-  Target,
   CheckCircle,
   XCircle,
   PlayCircle,
   StopCircle,
   Lightbulb,
   Cpu,
-  ZoomIn,
 } from 'lucide-react';
-//import { getDb } from '@/lib/db';
 
 interface PostureAnalysis {
   turtle_neck: boolean;
@@ -50,25 +44,7 @@ const normalizeCameraName = (value: string): string =>
 const isValidPreviewFramePayload = (payload: string): boolean =>
   payload.startsWith('data:image/') && payload.includes('base64,') && payload.length > 'data:image/jpeg;base64,'.length;
 
-const StatusItem: React.FC<{ label: string; isBad: boolean; detectedText?: string; }> = ({ label, isBad, detectedText }) => {
-  const { t } = useTranslation();
-  return (
-    <div className="flex items-center justify-between rounded-lg p-3 bg-muted">
-      <span className="text-sm font-medium text-foreground">{t(label)}</span>
-      <div className={`flex items-center gap-2 text-sm font-semibold ${isBad ? 'text-destructive' : 'text-green-600 dark:text-green-400'}`}>
-        {isBad ? <XCircle className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
-        <span>
-          {isBad
-            ? (detectedText ? t(detectedText) : t('webcam.detected', 'Detected'))
-            : t('webcam.normal', 'Normal')}
-        </span>
-      </div>
-    </div>
-  );
-};
-
-
-const WebcamCapture: React.FC = () => {
+const WebcamCapture = () => {
   const { t } = useTranslation();
   const [store, setStore] = useState<Store | null>(null);
   
@@ -364,10 +340,10 @@ const WebcamCapture: React.FC = () => {
   }, [isMonitoring, t]);
 
   const getPostureStatusColor = (score?: number | null): string => {
-    if (score == null) return 'ring-slate-300';
-    if (score >= 80) return 'ring-emerald-500';
-    if (score >= 60) return 'ring-amber-500';
-    return 'ring-red-500';
+    if (score == null) return '';
+    if (score >= 80) return 'score-good';
+    if (score >= 60) return 'score-medium';
+    return 'score-bad';
   };
   
   const isReadyForUI = isWebcamReady && isModelInitialized;
@@ -398,177 +374,111 @@ const WebcamCapture: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <Card className="overflow-hidden">
-            <div className={`relative group`}>
-              {shouldUseBackendPreview ? (
-                backendPreviewFrame ? (
-                  <img
-                    src={backendPreviewFrame}
-                    alt={t('webcam.backendPreviewAlt', 'Monitoring camera preview')}
-                    className="w-full h-full object-contain aspect-video transition-all bg-muted"
-                  />
-                ) : (
-                  <div className="w-full h-full aspect-video flex items-center justify-center bg-muted text-muted-foreground text-sm">
-                    {t('webcam.waitingPreviewFrame', '카메라 프레임을 불러오는 중...')}
-                  </div>
-                )
-              ) : (
-                <Webcam
-                  ref={webcamRef}
-                  audio={false}
-                  videoConstraints={videoConstraints}
-                  onUserMedia={onUserMedia}
-                  onUserMediaError={onUserMediaError}
-                  className="w-full h-full object-contain aspect-video transition-all bg-muted"
-                  screenshotFormat="image/jpeg"
-                />
-              )}
-              <div className={`absolute inset-0 transition-all ring-4 ring-inset pointer-events-none ${getPostureStatusColor(isMonitoring ? analysisResult?.posture_score : null)}`} />
-              {isMonitoring && analysisResult && analysisResult.reliable !== false && analysisResult.posture_score != null && (
-                <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm text-white p-3 rounded-lg text-left">
-                  <p className="text-sm font-medium">{t('webcam.currentScore', '현재 자세 점수')}</p>
-                  <p className="text-4xl font-bold">{analysisResult.posture_score}<span className="text-2xl">{t('dashboard.scoreUnit', '/100')}</span></p>
-                </div>
-              )}
-            </div>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('webcam.realtimeStatus', '실시간 분석 현황')}</CardTitle>
-              <CardDescription>
-                {t(isMonitoring ? 'webcam.currentDetected' : 'webcam.startMonitoringDescTray', '시스템 트레이 아이콘으로 모니터링을 시작하면 분석 결과가 표시됩니다.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isMonitoring && analysisResult ? (
-                analysisResult.reliable === false ? (
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-                    <p className="font-semibold">{t('webcam.lowConfidenceTitle', '暂时看不清姿态')}</p>
-                    <p className="mt-1 opacity-80">{t('webcam.lowConfidenceDesc', '请让头部和双肩完整出现在画面中；本帧不会计分，也不会触发提醒。')}</p>
-                  </div>
-                ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <StatusItem label="webcam.headPosition" isBad={analysisResult.turtle_neck} detectedText="webcam.caution" />
-                    <StatusItem label="webcam.shoulderMisalign" isBad={analysisResult.shoulder_misalignment} detectedText="webcam.imbalance" />
-                  </div>
-                  <div className="space-y-3">
-                    {analysisResult.recommendations.length > 0 && (
-                      <div className="p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
-                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2 text-blue-800 dark:text-blue-200"><Lightbulb className="h-4 w-4"/>{t('dashboard.tipsTitle', '개선 팁')}</h4>
-                        <ul className="space-y-1 text-xs text-blue-700 dark:text-blue-300 list-disc list-inside">
-                          {analysisResult.recommendations.map((rec) => (
-                            <li key={rec}>
-                              {t(
-                                // dotted key (e.g. "motivation.excellent") => dashboard.<dotted>
-                                rec.includes('.') ? `dashboard.${rec}` : `dashboard.tips.${rec}`
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                )
-              ) : (
-                <div className="text-center py-10 text-muted-foreground">
-                  <CameraOff className="mx-auto h-12 w-12 mb-2" />
-                  <p>{t('webcam.monitoringInactive', '모니터링 비활성화 상태')}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+    <section className="page-stack monitoring-page">
+      <header className="page-heading">
+        <div>
+          <p className="eyebrow">{t('webcam.eyebrow', 'Live posture field')}</p>
+          <h1>{t('webcam.title', 'See what OnePosture sees')}</h1>
+          <p>{t('webcam.subtitle', 'Set a comfortable upright baseline, then let confidence-aware detection handle the rest.')}</p>
         </div>
+      </header>
 
-        <div className="lg-col-span-1 space-y-6">
-          <Card>
-            <CardHeader><CardTitle>{t('webcam.controlPanel', '컨트롤 패널')}</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className={`w-full p-4 rounded-lg text-center font-semibold ${isMonitoring ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-muted text-muted-foreground'}`}>
-                {isMonitoring ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <Activity className="h-5 w-5" />
-                    <span>{t('webcam.monitoringActiveStatus', '모니터링 활성화 중')}</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-2">
-                    <StopCircle className="h-5 w-5" />
-                    <span>{t('webcam.monitoringInactiveStatus', '모니터링 비활성화 중')}</span>
-                  </div>
-                )}
-              </div>
-              <Button
-                onClick={toggleMonitoring}
-                className={`w-full gap-2 ${isMonitoring ? '' : 'bg-[#2f7d66] text-white hover:bg-[#276b58]'}`}
-                variant={isMonitoring ? 'outline' : 'default'}
-              >
-                {isMonitoring ? <StopCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
-                {isMonitoring
-                  ? t('webcam.stopMonitoring', '停止监测')
-                  : t('webcam.startMonitoring', '开始监测')}
-              </Button>
-              <p className="text-xs text-center text-muted-foreground pt-1">
-                {t('webcam.trayControlGuide', '也可以从菜单栏快速暂停或继续。')}
+      <div className="monitoring-layout">
+        <section className="camera-stage">
+          <header className="camera-stage-header">
+            <p>{t('webcam.cameraPreview', 'Private camera preview')}</p>
+            <span className={isMonitoring ? 'is-live' : ''}><i />{isMonitoring ? t('webcam.monitoringActiveStatus') : t('webcam.monitoringInactiveStatus')}</span>
+          </header>
+          <div className="camera-frame">
+            {shouldUseBackendPreview ? (
+              backendPreviewFrame ? (
+                <img src={backendPreviewFrame} alt={t('webcam.backendPreviewAlt', 'Monitoring camera preview')} />
+              ) : (
+                <div className="camera-waiting">{t('webcam.waitingPreviewFrame', 'Loading camera preview…')}</div>
+              )
+            ) : (
+              <Webcam
+                ref={webcamRef}
+                audio={false}
+                videoConstraints={videoConstraints}
+                onUserMedia={onUserMedia}
+                onUserMediaError={onUserMediaError}
+                screenshotFormat="image/jpeg"
+              />
+            )}
+            <div className={`camera-outline ${getPostureStatusColor(isMonitoring ? analysisResult?.posture_score : null)}`} />
+            {isMonitoring && analysisResult?.reliable !== false && analysisResult?.posture_score != null && (
+              <div className="camera-score"><strong>{analysisResult.posture_score}</strong><span>{t('webcam.currentScore')}</span></div>
+            )}
+          </div>
+        </section>
+
+        <aside className="monitor-side">
+          <section className="control-card">
+            <div className={`monitor-status ${isMonitoring ? 'is-live' : ''}`}>
+              <span>{isMonitoring ? <Activity /> : <StopCircle />}</span>
+              <p>
+                <strong>{isMonitoring ? t('webcam.monitoringActiveStatus') : t('webcam.monitoringInactiveStatus')}</strong>
+                <small>{isMonitoring ? t('webcam.backgroundGuide', 'You may close the window; monitoring continues from the menu bar.') : t('webcam.startGuide', 'Start when your head and shoulders are clearly visible.')}</small>
               </p>
-              
-              <div className="flex justify-around text-sm pt-2">
-                <span className={`flex items-center gap-1.5 ${isWebcamReady ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}><Camera className="h-4 w-4"/>{t('webcam.webcam', '웹캠')} {isWebcamReady ? 'ON' : 'OFF'}</span>
-                <span className={`flex items-center gap-1.5 ${isModelInitialized ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}><Cpu className="h-4 w-4"/>{t('webcam.aiModel', 'AI 모델')} {isModelInitialized ? 'ON' : 'OFF'}</span>
-              </div>
-            </CardContent>
-            {(error || initializationProgress) && (
-              <div className="mt-2 space-y-1">
-                {error && (
-                  <div className="text-xs text-destructive font-semibold px-2 py-1 rounded bg-destructive/10 border border-destructive/20">
-                    {error}
-                  </div>
-                )}
-                {initializationProgress && (
-                  <div className="text-xs text-muted-foreground px-2 py-1 rounded bg-muted border border-border">
-                    {initializationProgress}
-                  </div>
-                )}
+            </div>
+            <button type="button" className={`monitor-primary ${isMonitoring ? 'is-stop' : ''}`} onClick={toggleMonitoring}>
+              {isMonitoring ? <StopCircle /> : <PlayCircle />}
+              {isMonitoring ? t('webcam.stopMonitoring') : t('webcam.startMonitoring')}
+            </button>
+            <div className="system-readiness">
+              <div className={isWebcamReady ? 'is-ready' : ''}><Camera />{t('webcam.webcam')} · {isWebcamReady ? 'ON' : 'OFF'}</div>
+              <div className={isModelInitialized ? 'is-ready' : ''}><Cpu />{t('webcam.aiModel')} · {isModelInitialized ? 'ON' : 'OFF'}</div>
+            </div>
+            {error && <p className="inline-error">{error}</p>}
+            {initializationProgress && <p className="inline-progress">{initializationProgress}</p>}
+          </section>
+
+          <section className="calibration-card">
+            <h3>{t('webcam.calibration')}</h3>
+            <p>{t('webcam.calibrationGuide')}</p>
+            <button type="button" className="calibration-action" onClick={handleCalibrate} disabled={!isReadyForUI || calibrationStatus === 'calibrating'}>
+              {calibrationStatus === 'calibrating' ? t('webcam.saving') : t('webcam.setCurrentPosture')}
+            </button>
+            {calibrationStatus === 'success' && <p className="inline-progress">{t('webcam.saveSuccess')}</p>}
+            {calibrationStatus === 'error' && <p className="inline-error">{t('webcam.saveError')}</p>}
+            {calibratedImage && (
+              <div className="calibration-reference">
+                <button type="button" onClick={() => setIsPreviewOpen(true)}><img src={calibratedImage} alt={t('webcam.calibratedThumbnail')} /></button>
+                <span>{t('webcam.savedReferencePosture')}</span>
               </div>
             )}
-            <Separator className="my-4"/>
-            <CardContent>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Target className="h-4 w-4"/>{t('webcam.calibration', '자세 캘리브레이션')}</h3>
-              <Button onClick={handleCalibrate} disabled={!isReadyForUI || calibrationStatus === 'calibrating'} className="w-full" variant="outline">
-                {calibrationStatus === 'calibrating' ? t('webcam.saving', '저장 중...') : t('webcam.setCurrentPosture', '현재 자세를 기준으로 설정')}
-              </Button>
-              <p className="text-xs text-muted-foreground mt-2">{t('webcam.calibrationGuide', '保持自然坐直约 1 秒；OnePosture 会用多帧中位数建立基准。')}</p>
-              {calibrationStatus === 'success' && <p className="text-xs text-green-600 dark:text-green-400 mt-1">✅ {t('webcam.saveSuccess', '성공적으로 저장되었습니다.')}</p>}
-              {calibrationStatus === 'error' && <p className="text-xs text-destructive mt-1">❌ {t('webcam.saveError', '저장에 실패했습니다.')}</p>}
-              {calibratedImage && (
-                <div className="mt-4">
-                  <p className="text-xs font-semibold mb-2 text-muted-foreground">{t('webcam.savedPosture', '저장된 자세:')}</p>
-                  <button
-                    type="button"
-                    className="relative w-28 h-auto aspect-[4/3] rounded-lg overflow-hidden cursor-pointer group border-2 border-border"
-                    onClick={() => setIsPreviewOpen(true)}
-                  >
-                    <img src={calibratedImage} alt={t('webcam.calibratedThumbnail', 'Calibrated posture thumbnail')} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
-                      <ZoomIn className="h-8 w-8 text-white" />
-                    </div>
-                  </button>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+          </section>
+        </aside>
+
+        <section className="analysis-card">
+          <div className="section-heading"><div><p className="eyebrow">{t('webcam.realtimeStatus')}</p><h3>{t('webcam.currentDetected')}</h3></div></div>
+          <div className="analysis-content">
+            {isMonitoring && analysisResult ? (
+              analysisResult.reliable === false ? (
+                <div className="confidence-warning"><strong>{t('webcam.lowConfidenceTitle', 'Posture is not clear yet')}</strong><p>{t('webcam.lowConfidenceDesc', 'Keep your head and both shoulders visible. This frame will not be scored or trigger a reminder.')}</p></div>
+              ) : (
+                <>
+                  <div className={`analysis-signal ${analysisResult.turtle_neck ? 'is-bad' : 'is-good'}`}><span>{analysisResult.turtle_neck ? <XCircle /> : <CheckCircle />}{t('webcam.headPosition')}</span><strong>{analysisResult.turtle_neck ? t('webcam.caution') : t('webcam.normal')}</strong></div>
+                  <div className={`analysis-signal ${analysisResult.shoulder_misalignment ? 'is-bad' : 'is-good'}`}><span>{analysisResult.shoulder_misalignment ? <XCircle /> : <CheckCircle />}{t('webcam.shoulderMisalign')}</span><strong>{analysisResult.shoulder_misalignment ? t('webcam.imbalance') : t('webcam.normal')}</strong></div>
+                  {analysisResult.recommendations.length > 0 && (
+                    <div className="recommendation-box"><strong><Lightbulb />{t('dashboard.tipsTitle')}</strong><ul>{analysisResult.recommendations.map((rec) => <li key={rec}>{t(rec.includes('.') ? `dashboard.${rec}` : `dashboard.tips.${rec}`)}</li>)}</ul></div>
+                  )}
+                </>
+              )
+            ) : (
+              <div className="analysis-empty"><CameraOff /><p>{t('webcam.startMonitoringDesc', 'Start monitoring to see live posture signals.')}</p></div>
+            )}
+          </div>
+        </section>
       </div>
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{t('webcam.savedReferencePosture', '저장된 기준 자세')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t('webcam.savedReferencePosture', 'Saved reference posture')}</DialogTitle></DialogHeader>
           {calibratedImage && (<img src={calibratedImage} alt={t('webcam.calibratedPreview', 'Calibrated Posture Preview')} className="rounded-lg w-full h-auto aspect-video" />)}
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   );
 };
 

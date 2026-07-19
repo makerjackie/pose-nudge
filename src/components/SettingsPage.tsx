@@ -11,7 +11,19 @@ import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { useTheme } from 'next-themes';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
-import { Bell, CheckCircle2, KeyRound, MonitorUp, Moon, Sparkles, Volume2 } from 'lucide-react';
+import {
+    BadgeCheck,
+    Bell,
+    BellRing,
+    CheckCircle2,
+    Gauge,
+    KeyRound,
+    MonitorUp,
+    Moon,
+    Settings2,
+    Sparkles,
+    Volume2,
+} from 'lucide-react';
 import {
     loadReminderPreferences,
     saveReminderPreferences,
@@ -772,7 +784,7 @@ const LicenseSettings = () => {
                     </div>
                     <div className="text-left sm:text-right">
                         <p className="text-2xl font-bold text-[#14231f] dark:text-white">¥39</p>
-                        <p className="text-xs text-muted-foreground">中国 · 永久 / 海外 US$4.99</p>
+                        <p className="text-xs text-muted-foreground">{t('settings.priceLine', 'China · lifetime / International US$4.99')}</p>
                     </div>
                 </div>
             </CardHeader>
@@ -823,17 +835,62 @@ const LicenseSettings = () => {
     );
 };
 
+type SettingsSection = 'reminders' | 'detection' | 'general' | 'pro';
+
 const SettingsPage = () => {
+    const { t } = useTranslation();
+    const [section, setSection] = useState<SettingsSection>('reminders');
+    const sections: Array<{
+        id: SettingsSection;
+        icon: typeof BellRing;
+        label: string;
+        description: string;
+    }> = [
+        { id: 'reminders', icon: BellRing, label: t('settings.tabReminders', 'Reminders'), description: t('settings.tabRemindersDesc', 'How a posture nudge reaches you') },
+        { id: 'detection', icon: Gauge, label: t('settings.tabDetection', 'Detection'), description: t('settings.tabDetectionDesc', 'Camera, sensitivity and intervals') },
+        { id: 'general', icon: Settings2, label: t('settings.tabGeneral', 'General'), description: t('settings.tabGeneralDesc', 'Language, theme and updates') },
+        { id: 'pro', icon: BadgeCheck, label: 'OnePosture Pro', description: t('settings.tabProDesc', 'License and paid reminder tools') },
+    ];
+    const activeSection = sections.find((item) => item.id === section) ?? sections[0];
+
     return (
-        <div className="space-y-6 p-4 md:p-6">
-            <LanguageSettings />
-            <ThemeSettings />
-            <DetectionSettings />
-            <CameraSettings />
-            <NotificationSettings />
-            <LicenseSettings />
-            <UpdateSettings />
-        </div>
+        <section className="page-stack settings-page">
+            <header className="page-heading">
+                <div>
+                    <p className="eyebrow">{t('settings.eyebrow', 'Make OnePosture yours')}</p>
+                    <h1>{t('settings.pageTitle', 'A few choices, clearly grouped')}</h1>
+                    <p>{t('settings.pageSubtitle', 'Configure reminder coverage first, then tune detection only if your desk setup needs it.')}</p>
+                </div>
+            </header>
+
+            <div className="settings-shell">
+                <nav className="settings-index" aria-label={t('settings.settingsNavigation', 'Settings sections')}>
+                    {sections.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                            <button key={item.id} type="button" className={section === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
+                                <Icon />
+                                <span><strong>{item.label}</strong><small>{item.description}</small></span>
+                            </button>
+                        );
+                    })}
+                </nav>
+
+                <div className="settings-content">
+                    <header className="settings-section-heading">
+                        <p className="eyebrow">{activeSection.label}</p>
+                        <h2>{activeSection.label}</h2>
+                        <p>{activeSection.description}</p>
+                    </header>
+                    <div className="settings-panels">
+                        {section === 'reminders' && <NotificationSettings />}
+                        {section === 'detection' && <><DetectionSettings /><CameraSettings /></>}
+                        {section === 'general' && <><LanguageSettings /><ThemeSettings /><UpdateSettings /></>}
+                        {section === 'pro' && <LicenseSettings />}
+                    </div>
+                </div>
+            </div>
+        </section>
     );
 };
 

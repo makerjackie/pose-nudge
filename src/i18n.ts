@@ -16,7 +16,12 @@ const traditionalChinese = {
   ...translationZHHant,
   app: { ...translationZH.app, ...translationZHHant.app },
   nav: { ...translationZH.nav, ...translationZHHant.nav },
+  shell: { ...translationZH.shell, ...translationZHHant.shell },
+  dashboard: { ...translationZH.dashboard, ...translationZHHant.dashboard },
+  about: { ...translationZH.about, ...translationZHHant.about },
   settings: { ...translationZH.settings, ...translationZHHant.settings },
+  webcam: { ...translationZH.webcam, ...translationZHHant.webcam },
+  reminder: { ...translationZH.reminder, ...translationZHHant.reminder },
 };
 
 const resources = {
