@@ -130,11 +130,11 @@ impl PoseAnalyzer {
         let model_path = handle
             .path()
             .resolve("../models/yolo11n-pose.onnx", BaseDirectory::Resource)
-            .map_err(|e| anyhow!("모델 리소스 경로를 확인하지 못했습니다: {}", e))?;
+            .map_err(|e| anyhow!("Failed to resolve the model resource path: {}", e))?;
 
         if !model_path.exists() {
             return Err(anyhow!(
-                "yolo11n-pose.onnx 모델 파일을 찾을 수 없습니다. 경로: {:?}",
+                "The yolo11n-pose.onnx model file is missing at {:?}",
                 model_path
             ));
         }
@@ -144,14 +144,6 @@ impl PoseAnalyzer {
 
     pub fn is_model_initialized(&self) -> bool {
         self.session.lock().is_some()
-    }
-
-    pub fn test_analysis(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        if self.is_model_initialized() {
-            Ok(r#"{"status": "verified_yolo_model_loaded", "test": "success"}"#.to_string())
-        } else {
-            Ok(r#"{"status": "verified_yolo_model_not_loaded", "test": "success"}"#.to_string())
-        }
     }
 
     pub fn analyze_image_buffer(
@@ -167,7 +159,7 @@ impl PoseAnalyzer {
             info!("Model is not initialized");
             return Ok(serde_json::json!({
                 "status": "model_not_initialized",
-                "recommendations": ["AI 모델을 먼저 초기화해주세요"],
+                "recommendations": [],
             })
             .to_string());
         }
@@ -240,14 +232,6 @@ impl PoseAnalyzer {
         Ok(result.to_string())
     }
 
-    pub fn analyze_image_sync(
-        &self,
-        base64_data: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let image_data = self.decode_base64_image(base64_data)?;
-        self.analyze_image_buffer(&image_data)
-    }
-
     fn decode_base64_image(
         &self,
         base64_data: &str,
@@ -271,7 +255,7 @@ impl PoseAnalyzer {
         let mut session_guard = self.session.lock();
         let session = session_guard
             .as_mut()
-            .ok_or("YOLO-pose 모델이 초기화되지 않았습니다")?;
+            .ok_or("The YOLO pose model is not initialized")?;
         let outputs = session.run(ort::inputs!["images" => input_tensor])?;
         info!("Model inference succeeded");
         self.postprocess_output(&outputs, image.width(), image.height(), transform)
@@ -328,11 +312,11 @@ impl PoseAnalyzer {
         info!("Starting output postprocessing");
         let output = outputs
             .get("output0")
-            .ok_or("모델 출력을 찾을 수 없습니다")?;
+            .ok_or("The pose model output is missing")?;
         let (shape, data) = output.try_extract_tensor::<f32>()?;
         info!("Model output shape: {:?}", shape);
         if shape.len() != 3 || shape[1] != 56 {
-            return Err("예상하지 못한 모델 출력 형식입니다".into());
+            return Err("The pose model returned an unexpected output shape".into());
         }
         let detections = shape[2] as usize;
         info!("Detection count: {}", detections);
@@ -347,8 +331,7 @@ impl PoseAnalyzer {
                 best_detection = Some(i);
             }
         }
-        let detection_idx =
-            best_detection.ok_or("신뢰할 수 있는 pose detection을 찾을 수 없습니다")?;
+        let detection_idx = best_detection.ok_or("No reliable pose detection was found")?;
         info!("Selected best detection: {}", detection_idx);
         let keypoints = PoseKeypoints {
             nose: Self::extract_keypoint_from_data(
@@ -561,7 +544,7 @@ impl PoseAnalyzer {
         handle: &AppHandle,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if samples.is_empty() {
-            return Err("기준 자세 이미지가 없습니다.".into());
+            return Err("CALIBRATION_NO_SAMPLES".into());
         }
 
         let mut face_ratios = Vec::new();
@@ -598,7 +581,7 @@ impl PoseAnalyzer {
         let required_valid_frames = samples.len().min(3);
         if valid_frames < required_valid_frames {
             return Err(format!(
-                "기준 자세가 선명한 프레임이 부족합니다 ({}/{}). 카메라를 정면에 두고 다시 시도해주세요.",
+                "CALIBRATION_INSUFFICIENT_FRAMES:{}:{}",
                 valid_frames, required_valid_frames
             )
             .into());
@@ -616,7 +599,7 @@ impl PoseAnalyzer {
             self.save_baseline_to_file(handle)?;
             Ok(())
         } else {
-            Err("기준 자세를 설정하기 위한 키포인트를 감지하지 못했습니다.".into())
+            Err("CALIBRATION_NO_KEYPOINTS".into())
         }
     }
 
@@ -627,7 +610,7 @@ impl PoseAnalyzer {
         let app_data_path = handle
             .path()
             .app_data_dir()
-            .map_err(|e| format!("앱 데이터 디렉토리를 찾을 수 없습니다: {}", e))?;
+            .map_err(|e| format!("Failed to resolve the app data directory: {}", e))?;
         let baseline_file = app_data_path.join("baseline.json");
 
         let baseline_data = serde_json::json!({
@@ -649,7 +632,7 @@ impl PoseAnalyzer {
         let app_data_path = handle
             .path()
             .app_data_dir()
-            .map_err(|e| format!("앱 데이터 디렉토리를 찾을 수 없습니다: {}", e))?;
+            .map_err(|e| format!("Failed to resolve the app data directory: {}", e))?;
         let baseline_file = app_data_path.join("baseline.json");
 
         if baseline_file.exists() {

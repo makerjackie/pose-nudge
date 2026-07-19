@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
   <key>NSCameraUsageDescription</key>
-  <string>실시간 자세 분석을 위해 카메라 접근 권한이 필요합니다.</string>
+  <string>OnePosture needs camera access to analyze posture locally on this Mac.</string>
 </dict>
 </plist>

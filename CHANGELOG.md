@@ -2,10 +2,24 @@
 
 > This file is managed by release-please. Do not edit release sections manually.
 
-All notable changes to **Pose Nudge** will be documented in this file.
+All notable changes to **OnePosture** will be documented in this file. The original Pose Nudge history remains below for attribution.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.1.1] - 2026-07-20
+
+### Changed
+
+- Removed the original Pose Nudge and framework-template visual assets, documentation screenshots, and unused UI primitives.
+- Centralized monitoring lifecycle and persisted preferences behind maintainable application modules.
+- Added route-level code splitting and refreshed the branded settings controls.
+
+### Fixed
+
+- Removed Korean fallback text from Chinese runtime paths, native permission copy, and Rust error propagation.
+- Added an automated six-locale completeness check that rejects Hangul in Simplified and Traditional Chinese.
+- Removed unused Tauri commands, the default scaffold library, and unused frontend/Rust dependencies.
 
 ## [1.5.1](https://github.com/DDULDDUCK/pose-nudge/compare/pose-nudge-v1.5.0...pose-nudge-v1.5.1) (2026-02-27)
 

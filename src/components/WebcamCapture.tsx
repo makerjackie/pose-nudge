@@ -6,8 +6,8 @@ import { listen } from '@tauri-apps/api/event';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { load, Store } from '@tauri-apps/plugin-store';
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
-import { loadReminderPreferences } from '@/lib/reminders';
+import { appPreferences, resolvePreferredVideoDevice } from '@/lib/preferences';
+import { getMonitoringActive, onMonitoringChange, setMonitoringActive } from '@/lib/monitoring';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Camera,
@@ -30,19 +30,21 @@ interface PostureAnalysis {
   reliable?: boolean;
 }
 
-interface MonitoringStatus {
-  active: boolean;
-}
-
-const CAMERA_INDEX_KEY = 'pose_nudge_camera_index';
-const CAMERA_NAME_KEY = 'pose_nudge_camera_name';
-const LEGACY_CAMERA_DEVICE_KEY = 'pose_nudge_camera';
-
-const normalizeCameraName = (value: string): string =>
-  value.toLowerCase().replace(/\s+/g, ' ').trim();
-
 const isValidPreviewFramePayload = (payload: string): boolean =>
   payload.startsWith('data:image/') && payload.includes('base64,') && payload.length > 'data:image/jpeg;base64,'.length;
+
+const localizeCalibrationError = (
+  t: ReturnType<typeof useTranslation>['t'],
+  errorMessage: string,
+): string => {
+  const [code, detected, minimum] = errorMessage.split(':');
+  if (code === 'CALIBRATION_INSUFFICIENT_FRAMES') {
+    return t('webcam.calibrationInsufficientFrames', { detected, minimum });
+  }
+  if (code === 'CALIBRATION_NO_SAMPLES') return t('webcam.calibrationNoSamples');
+  if (code === 'CALIBRATION_NO_KEYPOINTS') return t('webcam.calibrationNoKeypoints');
+  return t('webcam.calibrationError', { error: errorMessage });
+};
 
 const WebcamCapture = () => {
   const { t } = useTranslation();
@@ -87,43 +89,8 @@ const WebcamCapture = () => {
       }
 
       try {
-        const savedIndexRaw = localStorage.getItem(CAMERA_INDEX_KEY);
-        const savedCameraName = localStorage.getItem(CAMERA_NAME_KEY);
-        const legacyDeviceId = localStorage.getItem(LEGACY_CAMERA_DEVICE_KEY);
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter((device) => device.kind === 'videoinput');
-
-        let nextDeviceId: string | undefined;
-
-        if (savedCameraName) {
-          const normalizedTarget = normalizeCameraName(savedCameraName);
-          const matchedByName = normalizedTarget.length > 0
-            ? videoInputs.find((device) => {
-                const normalizedLabel = normalizeCameraName(device.label);
-                return normalizedLabel.length > 0
-                  && (normalizedLabel.includes(normalizedTarget) || normalizedTarget.includes(normalizedLabel));
-              })
-            : undefined;
-
-          if (matchedByName) {
-            nextDeviceId = matchedByName.deviceId;
-          }
-        }
-
-        if (!nextDeviceId && legacyDeviceId && videoInputs.some((device) => device.deviceId === legacyDeviceId)) {
-          nextDeviceId = legacyDeviceId;
-        }
-
-        if (savedIndexRaw !== null) {
-          const parsedIndex = Number.parseInt(savedIndexRaw, 10);
-          if (!nextDeviceId && !Number.isNaN(parsedIndex) && parsedIndex >= 0 && parsedIndex < videoInputs.length) {
-            nextDeviceId = videoInputs[parsedIndex].deviceId;
-          }
-        }
-
-        if (!nextDeviceId && videoInputs.length > 0) {
-          nextDeviceId = videoInputs[0].deviceId;
-        }
+        const nextDeviceId = resolvePreferredVideoDevice(devices)?.deviceId;
 
         if (cancelled) {
           return;
@@ -131,7 +98,7 @@ const WebcamCapture = () => {
 
         setSelectedDeviceId(nextDeviceId);
         if (nextDeviceId) {
-          localStorage.setItem(LEGACY_CAMERA_DEVICE_KEY, nextDeviceId);
+          appPreferences.writeCamera({ deviceId: nextDeviceId });
         }
       } catch (deviceError) {
         if (!cancelled) {
@@ -158,13 +125,13 @@ const WebcamCapture = () => {
   const initializeModel = useCallback(async () => {
     if (isModelInitialized) return;
     try {
-      setInitializationProgress(t('webcam.initModel', 'AI 모델 초기화 중...'));
+      setInitializationProgress(t('webcam.initModel'));
       await invoke('initialize_pose_model');
       setIsModelInitialized(true);
       setInitializationProgress('');
     } catch (err) {
       console.error(err);
-      setError(t('webcam.initModelError', 'AI 모델 초기화에 실패했습니다.'));
+      setError(t('webcam.initModelError'));
       setInitializationProgress('');
     }
   }, [isModelInitialized, t]);
@@ -172,7 +139,7 @@ const WebcamCapture = () => {
   const handleCalibrate = useCallback(async () => {
     const hasCaptureSource = Boolean(webcamRef.current) || Boolean(shouldUseBackendPreview && backendPreviewFrame);
     if (!hasCaptureSource || !isModelInitialized || !store) {
-      setError(t('webcam.calibrationNotReady', '모델, 웹캠 또는 저장소가 준비되지 않았습니다.'));
+      setError(t('webcam.calibrationNotReady'));
       return;
     }
     setCalibrationStatus('calibrating');
@@ -190,7 +157,7 @@ const WebcamCapture = () => {
           }
         }
       }
-      if (imageSamples.length === 0) throw new Error(t('webcam.captureError', '웹캠 이미지를 캡처할 수 없습니다.'));
+      if (imageSamples.length === 0) throw new Error(t('webcam.captureError'));
 
       const imageSrc = imageSamples[Math.floor(imageSamples.length / 2)];
       
@@ -206,7 +173,7 @@ const WebcamCapture = () => {
       setCalibrationStatus('success');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(t('webcam.calibrationError', `자세 캘리브레이션에 실패했습니다: ${errorMessage}`));
+      setError(localizeCalibrationError(t, errorMessage));
       setCalibrationStatus('error');
     } finally {
         setTimeout(() => setCalibrationStatus('idle'), 3000);
@@ -233,9 +200,9 @@ const WebcamCapture = () => {
           setCalibratedImage(`${imageUrl}?t=${new Date().getTime()}`);
         }
       
-        const status = await invoke<MonitoringStatus>('get_monitoring_status');
-        setIsMonitoring(status.active);
-        if (!status.active) {
+        const active = await getMonitoringActive();
+        setIsMonitoring(active);
+        if (!active) {
           setAnalysisResult(null);
         }
       } catch (err) {
@@ -244,20 +211,15 @@ const WebcamCapture = () => {
     };
     loadInitialData();
 
+    const monitoringListener = onMonitoringChange((nextActive) => {
+      setIsMonitoring(nextActive);
+      if (!nextActive) {
+        setAnalysisResult(null);
+        setBackendPreviewFrame(null);
+        setUseBackendPreview(false);
+      }
+    });
     const unlistenPromises = Promise.all([
-      listen<string>('posture-alert', (event) => {
-        window.dispatchEvent(new CustomEvent('pose-nudge-toast', { detail: event.payload }));
-      }),
-      listen<{ active: boolean }>('monitoring-state-changed', (event) => {
-        const nextActive = event.payload.active;
-        setIsMonitoring(nextActive);
-
-        if (!nextActive) {
-          setAnalysisResult(null);
-          setBackendPreviewFrame(null);
-          setUseBackendPreview(false);
-        }
-      }),
       listen<string>('camera-preview-frame', (event) => {
         const framePayload = event.payload?.trim();
         if (!framePayload || !isValidPreviewFramePayload(framePayload)) {
@@ -274,6 +236,7 @@ const WebcamCapture = () => {
     ]);
 
     return () => {
+      void monitoringListener.then((unlisten) => unlisten());
       unlistenPromises.then((unlisteners) => {
         unlisteners.forEach((unlisten) => {
           unlisten();
@@ -317,7 +280,7 @@ const WebcamCapture = () => {
     setUseBackendPreview(isMonitoring);
 
     if (isMonitoring) {
-      setError(t('webcam.previewFallback', '브라우저 웹캠 접근에 실패해 분석용 카메라 화면으로 전환합니다.'));
+      setError(t('webcam.previewFallback'));
       return;
     }
 
@@ -336,7 +299,7 @@ const WebcamCapture = () => {
       console.error('Failed to resolve platform:', platformError);
     }
 
-    setError(t('webcam.permissionError', '웹캠에 접근할 수 없습니다.'));
+    setError(t('webcam.permissionError'));
   }, [isMonitoring, t]);
 
   const getPostureStatusColor = (score?: number | null): string => {
@@ -350,23 +313,7 @@ const WebcamCapture = () => {
 
   const toggleMonitoring = async () => {
     try {
-      if (isMonitoring) {
-        await invoke('stop_monitoring');
-        return;
-      }
-
-      if (
-        loadReminderPreferences().native_notification
-        && localStorage.getItem('oneposture_notification_permission_asked') !== 'true'
-      ) {
-        const granted = await isPermissionGranted();
-        if (!granted) {
-          await requestPermission();
-        }
-        localStorage.setItem('oneposture_notification_permission_asked', 'true');
-      }
-
-      await invoke('start_monitoring');
+      await setMonitoringActive(!isMonitoring);
     } catch (monitoringError) {
       console.error('Failed to change monitoring state:', monitoringError);
       setError(t('webcam.monitoringToggleError', '无法切换监测状态，请检查摄像头权限。'));

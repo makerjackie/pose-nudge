@@ -261,20 +261,6 @@ fn stop_and_release_camera(state: &AppState, reason: &str) {
 
 // --- Tauri Commands ---
 #[tauri::command]
-async fn analyze_pose_data(
-    state: State<'_, AppState>,
-    image_data: String,
-) -> Result<String, String> {
-    match state.pose_analyzer.analyze_image_sync(&image_data) {
-        Ok(result_str) => Ok(result_str),
-        Err(e) => {
-            warn!("Pose analysis failed during calibration: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-#[tauri::command]
 async fn initialize_pose_model(
     state: State<'_, AppState>,
     handle: tauri::AppHandle,
@@ -325,7 +311,7 @@ fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Resul
             image.height(),
             image::ColorType::Rgb8.into(),
         )
-        .map_err(|e| format!("프리뷰 프레임 JPEG 인코딩 실패: {}", e))?;
+        .map_err(|e| format!("Failed to encode preview frame as JPEG: {}", e))?;
 
     Ok(format!(
         "data:image/jpeg;base64,{}",
@@ -391,25 +377,9 @@ async fn calibrate_user_posture(
 }
 
 #[tauri::command]
-fn get_pose_recommendations() -> Result<Vec<String>, String> {
-    Ok(vec![
-        "목을 곧게 펴고 어깨를 뒤로 당기세요".to_string(),
-        "모니터를 눈높이에 맞춰 조정하세요".to_string(),
-        "30분마다 스트레칭을 해주세요".to_string(),
-        "의자에 등을 완전히 기대고 앉으세요".to_string(),
-        "발은 바닥에 평평하게 놓으세요".to_string(),
-    ])
-}
-
-#[tauri::command]
 fn get_monitoring_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let monitoring_active = *lock_or_recover(&state.monitoring_active);
     Ok(serde_json::json!({ "active": monitoring_active }))
-}
-
-#[tauri::command]
-fn get_reminder_preferences(state: State<'_, AppState>) -> ReminderPreferences {
-    lock_or_recover(&state.reminder_preferences).clone()
 }
 
 #[tauri::command]
@@ -591,14 +561,6 @@ fn request_preview_frame(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn test_model_status(state: State<'_, AppState>) -> Result<String, String> {
-    state
-        .pose_analyzer
-        .test_analysis()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 async fn save_calibrated_image(
     handle: tauri::AppHandle,
     image_data: String,
@@ -606,20 +568,22 @@ async fn save_calibrated_image(
     let base64_str = image_data
         .split(',')
         .nth(1)
-        .ok_or_else(|| "잘못된 Base64 데이터 형식입니다.".to_string())?;
+        .ok_or_else(|| "The image payload is not valid Base64 data".to_string())?;
     let decoded_image = STANDARD
         .decode(base64_str)
-        .map_err(|e| format!("Base64 디코딩 실패: {}", e))?;
+        .map_err(|e| format!("Failed to decode the Base64 image: {}", e))?;
     let app_data_path = handle
         .path()
         .app_data_dir()
-        .map_err(|e| format!("앱 데이터 디렉토리를 찾을 수 없습니다: {}", e))?;
+        .map_err(|e| format!("Failed to resolve the app data directory: {}", e))?;
     let image_dir = app_data_path.join("calibration_images");
-    fs::create_dir_all(&image_dir).map_err(|e| format!("이미지 저장 디렉토리 생성 실패: {}", e))?;
+    fs::create_dir_all(&image_dir)
+        .map_err(|e| format!("Failed to create the calibration image directory: {}", e))?;
     let file_path = image_dir.join("calibrated_pose.jpeg");
-    let mut file = fs::File::create(&file_path).map_err(|e| format!("파일 생성 실패: {:?}", e))?;
+    let mut file = fs::File::create(&file_path)
+        .map_err(|e| format!("Failed to create the calibration image file: {}", e))?;
     file.write_all(&decoded_image)
-        .map_err(|e| format!("파일 쓰기 실패: {:?}", e))?;
+        .map_err(|e| format!("Failed to write the calibration image: {}", e))?;
     info!("Calibration image overwritten: {:?}", file_path);
     Ok(file_path.to_string_lossy().into_owned())
 }
@@ -643,7 +607,7 @@ async fn get_available_cameras() -> Result<Vec<CameraDetail>, String> {
             #[cfg(target_os = "linux")]
             {
                 return Err(format!(
-                    "카메라 목록 조회 실패: {}. Linux에서는 다른 앱의 카메라 점유 또는 런타임 포털/샌드박스 권한 문제일 수 있습니다.",
+                    "Failed to query cameras: {}. On Linux, close other camera apps and verify portal or sandbox camera permissions.",
                     e
                 ));
             }
@@ -755,7 +719,7 @@ async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 
         app.exit(0);
     } else {
-        return Err("실행 파일 경로를 찾을 수 없습니다.".to_string());
+        return Err("Failed to resolve the current executable path".to_string());
     }
     Ok(())
 }
@@ -1135,7 +1099,7 @@ pub fn run() {
             let default_icon = app
                 .default_window_icon()
                 .cloned()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "기본 창 아이콘을 찾을 수 없습니다."))?;
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Default window icon is missing"))?;
 
             let tray = TrayIconBuilder::new()
                 .icon(default_icon)
@@ -1251,17 +1215,13 @@ pub fn run() {
             initialize_pose_model,
             start_monitoring,
             stop_monitoring,
-            analyze_pose_data,
-            get_pose_recommendations,
             get_monitoring_status,
-            get_reminder_preferences,
             set_reminder_preferences,
             send_test_reminder,
             dismiss_reminder_surfaces,
             get_license_status,
             activate_license,
             request_preview_frame,
-            test_model_status,
             calibrate_user_posture,
             save_calibrated_image,
             set_detection_settings,

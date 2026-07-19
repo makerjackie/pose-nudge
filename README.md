@@ -5,24 +5,20 @@
 The app is open source under AGPL-3.0. Core posture monitoring, native notifications, and floating reminders are free. OnePosture Pro is a ¥39 / US$4.99 one-time purchase that unlocks the screen-dimming reminder on up to three devices. The first activation is online; afterward the signed entitlement works permanently offline. The independent 01MVP payment/license service is not part of this repository and communicates through a narrow HTTP API. See [the product and commercialization plan](docs/ONEPOSTURE_PRODUCT_PLAN.md).
 
 <p align="center">
-  <!-- 프로젝트 로고를 여기에 추가할 수 있습니다. -->
   <img src="public/logo.png" alt="OnePosture Logo" width="150">
   <br>
-  <strong>AI-Powered Posture Correction Assistant - Real-time Posture Analysis and Improvement Guide</strong>
+  <strong>Private posture care with calm, reliable reminders</strong>
 </p>
 
 <p align="center">
-  <!-- 소셜 및 커뮤니티 배지 -->
   <a href="https://github.com/makerjackie/pose-nudge/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/makerjackie/pose-nudge?style=for-the-badge&logo=github&color=gold"></a>
   <a href="https://github.com/makerjackie/pose-nudge/network/members"><img alt="GitHub Forks" src="https://img.shields.io/github/forks/makerjackie/pose-nudge?style=for-the-badge&logo=github&color=blueviolet"></a>
   <a href="https://github.com/dduldduck/pose-nudge/graphs/contributors"><img alt="All Contributors" src="https://img.shields.io/github/all-contributors/dduldduck/pose-nudge?style=for-the-badge&color=orange"></a>
   <br>
-  <!-- 상태 및 릴리즈 배지 -->
   <a href="https://github.com/makerjackie/pose-nudge/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/makerjackie/pose-nudge?style=for-the-badge&color=brightgreen"></a>
   <a href="https://github.com/makerjackie/pose-nudge/releases"><img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/makerjackie/pose-nudge/total?style=for-the-badge&logo=github&color=success"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/makerjackie/pose-nudge?style=for-the-badge&color=informational"></a>
   <br>
-  <!-- 개발 활동 배지 -->
   <a href="https://github.com/makerjackie/pose-nudge/actions/workflows/release.yml"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/makerjackie/pose-nudge/release.yml?branch=main&style=for-the-badge&logo=githubactions"></a>
   <a href="https://github.com/makerjackie/pose-nudge/issues"><img alt="GitHub Issues" src="https://img.shields.io/github/issues/makerjackie/pose-nudge?style=for-the-badge&logo=github&color=red"></a>
   <a href="https://github.com/makerjackie/pose-nudge/pulls"><img alt="GitHub Pull Requests" src="https://img.shields.io/github/issues-pr/makerjackie/pose-nudge?style=for-the-badge&logo=github&color=yellow"></a>
@@ -50,25 +46,14 @@ OnePosture uses your webcam locally to analyze posture and delivers reminders th
 
 ---
 
-## 🎥 Demo
+## Current interface
 
-### Screenshots
-
-<!-- Add screenshots here -->
 <p align="center">
-  <img width="700" height="500" alt="스크린샷 2025-09-05 오후 5 02 27" src="https://github.com/user-attachments/assets/befe4249-1f40-47c8-b3d5-b5c1adece85f" />
-
-  <img width="700" height="500" alt="스크린샷 2025-09-05 오후 5 03 50" src="https://github.com/user-attachments/assets/7718bc18-2e6a-4b3a-ae9a-f515a0a403bd" />
-  
-  <img width="630" height="145" alt="스크린샷 2025-09-05 오후 5 17 18" src="https://github.com/user-attachments/assets/263b3250-fbc5-47e8-ac73-a0466c7f7c1c" />
-
-</p>
-
-### Demo GIF
-
-<!-- Add demo GIF here -->
-<p align="center">
-  <img src="demo/demo.gif" alt="Demo GIF" width="600">
+  <img width="760" alt="OnePosture dashboard" src="docs/screenshots/dashboard.webp" />
+  <img width="760" alt="OnePosture live monitoring" src="docs/screenshots/monitoring.webp" />
+  <img width="760" alt="OnePosture reminder settings" src="docs/screenshots/settings.webp" />
+  <img width="420" alt="OnePosture reliable floating reminder" src="docs/screenshots/reliable-reminder.webp" />
+  <img width="760" alt="OnePosture open source information" src="docs/screenshots/about.webp" />
 </p>
 
 ---
@@ -121,7 +106,7 @@ npm run tauri dev
 pose-nudge/
 ├── src/                    # React Frontend
 │   ├── components/         # UI Components
-│   │   ├── ui/            # shadcn/ui Components
+│   │   ├── ui/            # Branded accessible primitives
 │   │   ├── Dashboard.tsx   # Dashboard
 │   │   ├── WebcamCapture.tsx # Webcam Component
 │   │   └── SettingsPage.tsx # Settings Page

@@ -73,7 +73,7 @@ const AboutPage = () => {
 
         <article className="update-card">
           <div className="section-icon"><RefreshCw /></div>
-          <p className="eyebrow">Updates</p>
+          <p className="eyebrow">{t('about.updateEyebrow', 'Updates')}</p>
           <h2>{t('about.updateTitle', 'Keep your posture toolkit current')}</h2>
           <p>{t('about.updateDesc', 'Signed updates are delivered from the public GitHub release feed.')}</p>
           <button type="button" className="secondary-action" onClick={checkForUpdates} disabled={checking}>

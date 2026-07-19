@@ -1,18 +1,9 @@
 [package]
 name = "oneposture"
-version = "2.1.0"
+version = "2.1.1"
 description = "A privacy-first posture companion with reliable reminders"
 authors = ["One Apps Studio", "Pose Nudge contributors"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "pose_nudge_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.5", features = [] }
@@ -31,12 +22,8 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 anyhow = "1.0"
 log = "0.4.29"
 tauri-plugin-log = { version = "2.8.0", features = ["colored"] }
-env_logger = "0.11.8"
-dirs = "6.0.0"
 chrono = { version = "0.4.44", features = ["serde"] }
 parking_lot = "0.12.5"
-imageproc = "0.26.0"
-thiserror = "2.0.18" # 에러 처리를 위해 추가
 tauri-plugin-store = "2.4.2"
 tauri-plugin-fs = "2.4.5"
 tauri-plugin-sql = { version = "2.3.2", features = ["sqlite"] }

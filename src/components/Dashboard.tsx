@@ -24,6 +24,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { getDb } from '@/lib/db';
 import { loadReminderPreferences } from '@/lib/reminders';
+import { appPreferences } from '@/lib/preferences';
 
 interface DashboardStats {
   totalSessions: number;
@@ -37,12 +38,6 @@ interface DailyScore {
   name: string;
   score: number;
 }
-
-const resolveSecondsPerRecord = (): number => {
-  const raw = Number.parseInt(localStorage.getItem('pose_nudge_monitoring_interval') || '3', 10);
-  const interval = Number.isFinite(raw) && raw > 0 ? raw : 3;
-  return interval * (localStorage.getItem('pose_nudge_battery_saving_mode') === 'true' ? 60 : 1);
-};
 
 const formatMinutes = (minutes: number, t: ReturnType<typeof useTranslation>['t']) => {
   if (minutes < 60) return t('dashboard.timeFormat.minutes', { count: minutes });
@@ -89,7 +84,7 @@ const Dashboard = ({ isMonitoring, onOpenMonitoring }: { isMonitoring: boolean; 
         `, [sixDaysAgo]),
       ]);
       const row = rows[0] || {};
-      const secondsPerRecord = resolveSecondsPerRecord();
+      const secondsPerRecord = appPreferences.recordIntervalSeconds();
       setStats({
         totalSessions: row.total_sessions || 0,
         averageScore: Math.round(row.average_score || 0),

@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import {
   Activity,
   BarChart3,
@@ -13,26 +11,17 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import Dashboard from '@/components/Dashboard';
-import WebcamCapture from '@/components/WebcamCapture';
-import SettingsPage from '@/components/SettingsPage';
-import AboutPage from '@/components/AboutPage';
-import { loadReminderPreferences } from '@/lib/reminders';
+import { appPreferences, normalizeAppLanguage } from '@/lib/preferences';
+import { configureMonitoring, onMonitoringChange, setMonitoringActive } from '@/lib/monitoring';
 import i18n from './i18n';
 import './App.css';
 
 type ViewId = 'dashboard' | 'monitoring' | 'settings' | 'about';
 
-const normalizeLanguage = (lang: string | undefined): string => {
-  if (!lang) return 'en';
-  const lowered = lang.toLowerCase();
-  if (lowered.startsWith('ko')) return 'ko';
-  if (lowered.startsWith('ja')) return 'ja';
-  if (lowered.startsWith('zh-hant') || lowered.startsWith('zh-tw') || lowered.startsWith('zh-hk')) return 'zh-Hant';
-  if (lowered.startsWith('zh')) return 'zh';
-  if (lowered.startsWith('tr')) return 'tr';
-  return 'en';
-};
+const Dashboard = lazy(() => import('@/components/Dashboard'));
+const WebcamCapture = lazy(() => import('@/components/WebcamCapture'));
+const SettingsPage = lazy(() => import('@/components/SettingsPage'));
+const AboutPage = lazy(() => import('@/components/AboutPage'));
 
 const navigation: Array<{ id: ViewId; icon: typeof Activity }> = [
   { id: 'dashboard', icon: BarChart3 },
@@ -49,8 +38,8 @@ function App() {
 
   useEffect(() => {
     const syncLanguageToBackend = (lang: string | undefined) => {
-      const normalized = normalizeLanguage(lang);
-      localStorage.setItem('pose_nudge_language', normalized);
+      const normalized = normalizeAppLanguage(lang);
+      appPreferences.writeLanguage(normalized);
       invoke('set_current_language', { lang: normalized }).catch(console.error);
     };
 
@@ -60,55 +49,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const batterySavingMode = localStorage.getItem('pose_nudge_battery_saving_mode') === 'true';
-    invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
-
-    const savedCameraIndex = Number.parseInt(localStorage.getItem('pose_nudge_camera_index') || '0', 10);
-    if (!Number.isNaN(savedCameraIndex) && savedCameraIndex >= 0) {
-      invoke('set_selected_camera', { index: savedCameraIndex }).catch(console.error);
-    }
-
-    const monitoringInterval = Number.parseInt(localStorage.getItem('pose_nudge_monitoring_interval') || '3', 10);
-    invoke(
-      'set_monitoring_interval',
-      batterySavingMode ? { intervalMins: monitoringInterval } : { intervalSecs: monitoringInterval },
-    ).catch(console.error);
-
-    invoke('set_detection_settings', {
-      frequency: batterySavingMode ? 1 : Number.parseInt(localStorage.getItem('pose_nudge_notification_frequency') || '2', 10),
-      turtleSensitivity: Number.parseInt(localStorage.getItem('pose_nudge_turtle_neck_sensitivity') || '2', 10),
-      shoulderSensitivity: Number.parseInt(localStorage.getItem('pose_nudge_shoulder_sensitivity') || '2', 10),
-    }).catch(console.error);
-
-    invoke('set_reminder_preferences', { preferences: loadReminderPreferences() }).catch(console.error);
-    invoke<{ active: boolean }>('get_monitoring_status')
-      .then((status) => setIsMonitoring(status.active))
-      .catch(console.error);
-
-    const ensureNotificationPermission = async () => {
-      const preferences = loadReminderPreferences();
-      const permissionAsked = localStorage.getItem('oneposture_notification_permission_requested');
-      if (preferences.native_notification && !permissionAsked && !(await isPermissionGranted())) {
-        localStorage.setItem('oneposture_notification_permission_requested', 'true');
-        await requestPermission();
-      }
-    };
-    void ensureNotificationPermission().catch(console.error);
-
-    const monitoringListener = listen<{ active: boolean }>('monitoring-state-changed', (event) => {
-      setIsMonitoring(event.payload.active);
-    });
+    void configureMonitoring().then(setIsMonitoring).catch(console.error);
+    const monitoringListener = onMonitoringChange(setIsMonitoring);
     return () => void monitoringListener.then((dispose) => dispose());
   }, []);
 
   const toggleMonitoring = async () => {
     setChangingMonitoring(true);
     try {
-      if (!isMonitoring && loadReminderPreferences().native_notification && !(await isPermissionGranted())) {
-        await requestPermission();
-      }
-      await invoke(isMonitoring ? 'stop_monitoring' : 'start_monitoring');
-      setIsMonitoring((current) => !current);
+      await setMonitoringActive(!isMonitoring);
       if (!isMonitoring) setActiveView('monitoring');
     } catch (error) {
       console.error('Failed to change monitoring state:', error);
@@ -169,7 +118,9 @@ function App() {
       </header>
 
       <main className="workspace" id="main-content">
-        {content}
+        <Suspense fallback={<div className="view-loading" role="status">{t('shell.loading', 'Loading…')}</div>}>
+          {content}
+        </Suspense>
       </main>
     </div>
   );

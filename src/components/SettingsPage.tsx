@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
@@ -10,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { check } from '@tauri-apps/plugin-updater';
 import { useTheme } from 'next-themes';
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { isPermissionGranted } from '@tauri-apps/plugin-notification';
 import {
     BadgeCheck,
     Bell,
@@ -29,17 +27,13 @@ import {
     saveReminderPreferences,
     type ReminderPreferences,
 } from '@/lib/reminders';
-
-// --- LocalStorage Keys ---
-const LANGUAGE_KEY = "pose_nudge_language";
-const NOTIFICATION_FREQUENCY_KEY = "pose_nudge_notification_frequency";
-const TURTLE_NECK_SENSITIVITY_KEY = "pose_nudge_turtle_neck_sensitivity";
-const SHOULDER_SENSITIVITY_KEY = "pose_nudge_shoulder_sensitivity";
-const CAMERA_INDEX_KEY = "pose_nudge_camera_index";
-const CAMERA_NAME_KEY = "pose_nudge_camera_name";
-const LEGACY_CAMERA_DEVICE_KEY = "pose_nudge_camera";
-const MONITORING_INTERVAL_KEY = "pose_nudge_monitoring_interval";
-const BATTERY_SAVING_MODE_KEY = "pose_nudge_battery_saving_mode";
+import {
+    appPreferences,
+    normalizeAppLanguage,
+    resolvePreferredVideoDevice,
+    type AppLanguage,
+} from '@/lib/preferences';
+import { requestReminderPermission } from '@/lib/monitoring';
 
 // --- Type Definitions ---
 interface CameraDetail {
@@ -56,58 +50,39 @@ interface LicenseStatus {
     message?: string;
 }
 
-const normalizeCameraName = (value: string): string =>
-    value.toLowerCase().replace(/\s+/g, ' ').trim();
-
-const normalizeSettingsLanguage = (value: string): string => {
-    const normalized = value.toLowerCase();
-    if (normalized.startsWith('zh-hant') || normalized.startsWith('zh-tw') || normalized.startsWith('zh-hk')) return 'zh-Hant';
-    if (normalized.startsWith('zh')) return 'zh';
-    if (normalized.startsWith('ko')) return 'ko';
-    if (normalized.startsWith('ja')) return 'ja';
-    if (normalized.startsWith('tr')) return 'tr';
-    return 'en';
-};
-
-// --- Components ---
-
 const LanguageSettings = () => {
     const { i18n, t } = useTranslation();
-    const [lang, setLang] = useState(() => normalizeSettingsLanguage(localStorage.getItem(LANGUAGE_KEY) || i18n.language || 'en'));
+    const [lang, setLang] = useState<AppLanguage>(() => appPreferences.readLanguage(i18n.language));
 
     useEffect(() => {
-        const initialLang = normalizeSettingsLanguage(
-            localStorage.getItem(LANGUAGE_KEY) ||
-            i18n.language ||
-            'en',
-        );
+        const initialLang = appPreferences.readLanguage(i18n.language);
 
         if (initialLang !== i18n.language) {
-            i18n.changeLanguage(initialLang);
+            void i18n.changeLanguage(initialLang);
         }
         setLang(initialLang);
-        localStorage.setItem(LANGUAGE_KEY, initialLang);
+        appPreferences.writeLanguage(initialLang);
         invoke('set_current_language', { lang: initialLang }).catch(console.error);
-
     }, [i18n]);
 
     const handleChange = (value: string) => {
-        i18n.changeLanguage(value);
-        setLang(value);
-        localStorage.setItem(LANGUAGE_KEY, value);
-        invoke('set_current_language', { lang: value }).catch(console.error);
+        const language = normalizeAppLanguage(value);
+        void i18n.changeLanguage(language);
+        setLang(language);
+        appPreferences.writeLanguage(language);
+        invoke('set_current_language', { lang: language }).catch(console.error);
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t('settings.languageTitle', '언어 설정')}</CardTitle>
-            </CardHeader>
-            <CardContent>
+        <section className="settings-card">
+            <header className="settings-card-header">
+                <h3>{t('settings.languageTitle')}</h3>
+            </header>
+            <div className="settings-card-content">
                 <Select value={lang} onValueChange={handleChange}>
                     <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="ko">{t('settings.languageKorean', '한국어')}</SelectItem>
+                        <SelectItem value="ko">{t('settings.languageKorean')}</SelectItem>
                         <SelectItem value="en">{t('settings.languageEnglish', 'English')}</SelectItem>
                         <SelectItem value="ja">{t('settings.languageJapanese', '日本語')}</SelectItem>
                         <SelectItem value="zh">{t('settings.languageChinese', '简体中文')}</SelectItem>
@@ -115,8 +90,8 @@ const LanguageSettings = () => {
                         <SelectItem value="tr">{t('settings.languageTurkish', 'Türkçe')}</SelectItem>
                     </SelectContent>
                 </Select>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -124,21 +99,24 @@ const LanguageSettings = () => {
 const DetectionSettings = () => {
     const { t } = useTranslation();
 
-    const [batterySavingMode, setBatterySavingMode] = useState(() => localStorage.getItem(BATTERY_SAVING_MODE_KEY) === 'true');
-    const [frequency, setFrequency] = useState<string>(() => localStorage.getItem(NOTIFICATION_FREQUENCY_KEY) || '2');
-    const [turtleNeckSensitivity, setTurtleNeckSensitivity] = useState<string>(() => localStorage.getItem(TURTLE_NECK_SENSITIVITY_KEY) || '2');
-    const [shoulderSensitivity, setShoulderSensitivity] = useState<string>(() => localStorage.getItem(SHOULDER_SENSITIVITY_KEY) || '2');
-    const [monitoringInterval, setMonitoringInterval] = useState<string>(() => localStorage.getItem(MONITORING_INTERVAL_KEY) || '3');
+    const [batterySavingMode, setBatterySavingMode] = useState(() => appPreferences.readDetection().batterySavingMode);
+    const [frequency, setFrequency] = useState<string>(() => String(appPreferences.readDetection().notificationFrequency));
+    const [turtleNeckSensitivity, setTurtleNeckSensitivity] = useState<string>(() => String(appPreferences.readDetection().turtleNeckSensitivity));
+    const [shoulderSensitivity, setShoulderSensitivity] = useState<string>(() => String(appPreferences.readDetection().shoulderSensitivity));
+    const [monitoringInterval, setMonitoringInterval] = useState<string>(() => String(appPreferences.readDetection().monitoringInterval));
 
     useEffect(() => {
         invoke('set_battery_saving_mode', { mode: batterySavingMode }).catch(console.error);
     }, [batterySavingMode]);
 
     useEffect(() => {
-        localStorage.setItem(NOTIFICATION_FREQUENCY_KEY, frequency);
-        localStorage.setItem(TURTLE_NECK_SENSITIVITY_KEY, turtleNeckSensitivity);
-        localStorage.setItem(SHOULDER_SENSITIVITY_KEY, shoulderSensitivity);
-        localStorage.setItem(MONITORING_INTERVAL_KEY, monitoringInterval);
+        appPreferences.writeDetection({
+            batterySavingMode,
+            notificationFrequency: Number.parseInt(frequency, 10),
+            turtleNeckSensitivity: Number.parseInt(turtleNeckSensitivity, 10),
+            shoulderSensitivity: Number.parseInt(shoulderSensitivity, 10),
+            monitoringInterval: Number.parseInt(monitoringInterval, 10),
+        });
 
         invoke('set_detection_settings', {
             frequency: batterySavingMode ? 1 : parseInt(frequency, 10),
@@ -159,44 +137,43 @@ const DetectionSettings = () => {
     }, [frequency, turtleNeckSensitivity, shoulderSensitivity, monitoringInterval, batterySavingMode]);
 
     const monitoringOptions = batterySavingMode ? [
-        { value: '3', label: t('settings.interval3m', '3분') },
-        { value: '5', label: t('settings.interval5m', '5분') },
-        { value: '10', label: t('settings.interval10m', '10분') },
-        { value: '15', label: t('settings.interval15m', '15분') },
-        { value: '30', label: t('settings.interval30m', '30분') },
+        { value: '3', label: t('settings.interval3m') },
+        { value: '5', label: t('settings.interval5m') },
+        { value: '10', label: t('settings.interval10m') },
+        { value: '15', label: t('settings.interval15m') },
+        { value: '30', label: t('settings.interval30m') },
     ] : [
-        { value: '3', label: t('settings.interval3s', '3초') },
-        { value: '5', label: t('settings.interval5s', '5초') },
-        { value: '7', label: t('settings.interval7s', '7초') },
-        { value: '10', label: t('settings.interval10s', '10초') },
-        { value: '15', label: t('settings.interval15s', '15초') },
+        { value: '3', label: t('settings.interval3s') },
+        { value: '5', label: t('settings.interval5s') },
+        { value: '7', label: t('settings.interval7s') },
+        { value: '10', label: t('settings.interval10s') },
+        { value: '15', label: t('settings.interval15s') },
     ];
 
     const handleBatterySavingToggle = (checked: boolean) => {
         setBatterySavingMode(checked);
-        localStorage.setItem(BATTERY_SAVING_MODE_KEY, checked.toString());
         if (checked) {
             setFrequency('1');
         }
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t('settings.detectionTitle', '감지 및 알림 설정')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
+        <section className="settings-card">
+            <header className="settings-card-header">
+                <h3>{t('settings.detectionTitle')}</h3>
+            </header>
+            <div className="settings-card-content space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                        <span className="font-medium">{t('settings.batterySavingMode', '배터리 절약 모드')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.batterySavingModeDesc', '활성화 시 모니터링 주기를 분단위로 변경하고 카메라를 절약 모드로 운영합니다.')}</p>
+                        <span className="font-medium">{t('settings.batterySavingMode')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.batterySavingModeDesc')}</p>
                     </div>
                     <Switch checked={batterySavingMode} onCheckedChange={handleBatterySavingToggle} />
                 </div>
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                        <span className="font-medium">{t('settings.monitoringInterval', '모니터링 주기')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.monitoringIntervalDesc', '자세를 분석하는 시간 간격을 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.monitoringInterval')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.monitoringIntervalDesc')}</p>
                     </div>
                     <Select value={monitoringInterval} onValueChange={setMonitoringInterval}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
@@ -208,48 +185,48 @@ const DetectionSettings = () => {
 
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                        <span className="font-medium">{t('settings.notificationFrequency', '알림 빈도')}</span>
-                        <p className="text-sm text-muted-foreground">{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving', '배터리 절약 모드에서는 1번으로 고정됩니다.') : t('settings.notificationFrequencyDescNormal', '최근 3번의 감지 중 몇 번 이상 나쁜 자세가 감지되면 알림을 받을지 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.notificationFrequency')}</span>
+                        <p className="text-sm text-muted-foreground">{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving') : t('settings.notificationFrequencyDescNormal')}</p>
                     </div>
                     <Select value={frequency} onValueChange={setFrequency} disabled={batterySavingMode}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="1">{t('settings.frequencyOnce', '1번 (민감)')}</SelectItem>
-                            <SelectItem value="2">{t('settings.frequencyTwice', '2번 (보통)')}</SelectItem>
-                            <SelectItem value="3">{t('settings.frequencyThrice', '3번 (둔감)')}</SelectItem>
+                            <SelectItem value="1">{t('settings.frequencyOnce')}</SelectItem>
+                            <SelectItem value="2">{t('settings.frequencyTwice')}</SelectItem>
+                            <SelectItem value="3">{t('settings.frequencyThrice')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                        <span className="font-medium">{t('settings.turtleNeckSensitivity', '거북목 감지 강도')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.turtleNeckSensitivityDesc', '거북목 자세를 얼마나 엄격하게 감지할지 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.turtleNeckSensitivity')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.turtleNeckSensitivityDesc')}</p>
                     </div>
                     <Select value={turtleNeckSensitivity} onValueChange={setTurtleNeckSensitivity}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="1">{t('settings.sensitivityLoose', '느슨하게')}</SelectItem>
-                            <SelectItem value="2">{t('settings.sensitivityNormal', '보통')}</SelectItem>
-                            <SelectItem value="3">{t('settings.sensitivityStrict', '엄격하게')}</SelectItem>
+                            <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
+                            <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
+                            <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
                 <div className="flex items-center justify-between">
                     <div className="space-y-1">
-                        <span className="font-medium">{t('settings.shoulderSensitivity', '어깨 정렬 감지 강도')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.shoulderSensitivityDesc', '어깨 비대칭을 얼마나 엄격하게 감지할지 설정합니다.')}</p>
+                        <span className="font-medium">{t('settings.shoulderSensitivity')}</span>
+                        <p className="text-sm text-muted-foreground">{t('settings.shoulderSensitivityDesc')}</p>
                     </div>
                     <Select value={shoulderSensitivity} onValueChange={setShoulderSensitivity}>
                         <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="1">{t('settings.sensitivityLoose', '느슨하게')}</SelectItem>
-                            <SelectItem value="2">{t('settings.sensitivityNormal', '보통')}</SelectItem>
-                            <SelectItem value="3">{t('settings.sensitivityStrict', '엄격하게')}</SelectItem>
+                            <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
+                            <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
+                            <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -257,7 +234,7 @@ const CameraSettings = () => {
     const { t } = useTranslation();
     const [cameras, setCameras] = useState<CameraDetail[]>([]);
     const [selectedCameraIndex, setSelectedCameraIndex] = useState<string>(
-        () => localStorage.getItem(CAMERA_INDEX_KEY) || '0'
+        () => String(appPreferences.readCamera().index)
     );
 
     const syncPreviewCameraDevice = useCallback(async (cameraName: string, fallbackIndex: number) => {
@@ -267,32 +244,13 @@ const CameraSettings = () => {
 
         try {
             const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter((device) => device.kind === 'videoinput');
-
-            if (videoInputs.length === 0) {
-                return;
-            }
-
-            const normalizedTarget = normalizeCameraName(cameraName);
-            const matchedByName = normalizedTarget
-                ? videoInputs.find((device) => {
-                    const normalizedLabel = normalizeCameraName(device.label);
-                    return normalizedLabel.length > 0 && (
-                        normalizedLabel.includes(normalizedTarget)
-                        || normalizedTarget.includes(normalizedLabel)
-                    );
-                })
-                : undefined;
-
-            const matchedByIndex = Number.isInteger(fallbackIndex)
-                && fallbackIndex >= 0
-                && fallbackIndex < videoInputs.length
-                ? videoInputs[fallbackIndex]
-                : videoInputs[0];
-
-            const resolvedDeviceId = (matchedByName ?? matchedByIndex)?.deviceId;
+            const resolvedDeviceId = resolvePreferredVideoDevice(devices, {
+                index: fallbackIndex,
+                name: cameraName,
+                deviceId: appPreferences.readCamera().deviceId,
+            })?.deviceId;
             if (resolvedDeviceId) {
-                localStorage.setItem(LEGACY_CAMERA_DEVICE_KEY, resolvedDeviceId);
+                appPreferences.writeCamera({ deviceId: resolvedDeviceId });
             }
         } catch (error) {
             console.error('Failed to sync preview camera device:', error);
@@ -305,7 +263,7 @@ const CameraSettings = () => {
                 const availableCameras = await invoke<CameraDetail[]>('get_available_cameras');
                 setCameras(availableCameras);
 
-                const savedIndex = localStorage.getItem(CAMERA_INDEX_KEY) || '0';
+                const savedIndex = String(appPreferences.readCamera().index);
                 const hasSavedCamera = availableCameras.some((cam) => cam.index.toString() === savedIndex);
                 const resolvedIndex = hasSavedCamera
                     ? savedIndex
@@ -314,11 +272,11 @@ const CameraSettings = () => {
                         : '0';
 
                 setSelectedCameraIndex(resolvedIndex);
-                localStorage.setItem(CAMERA_INDEX_KEY, resolvedIndex);
+                appPreferences.writeCamera({ index: Number.parseInt(resolvedIndex, 10) });
 
                 const selectedCamera = availableCameras.find((cam) => cam.index.toString() === resolvedIndex);
                 if (selectedCamera) {
-                    localStorage.setItem(CAMERA_NAME_KEY, selectedCamera.name);
+                    appPreferences.writeCamera({ name: selectedCamera.name });
                     await syncPreviewCameraDevice(selectedCamera.name, selectedCamera.index);
                 }
 
@@ -333,11 +291,11 @@ const CameraSettings = () => {
     const handleCameraChange = (value: string) => {
         const newIndex = parseInt(value, 10);
         setSelectedCameraIndex(value);
-        localStorage.setItem(CAMERA_INDEX_KEY, value);
+        appPreferences.writeCamera({ index: newIndex });
 
         const selectedCamera = cameras.find((camera) => camera.index === newIndex);
         if (selectedCamera) {
-            localStorage.setItem(CAMERA_NAME_KEY, selectedCamera.name);
+            appPreferences.writeCamera({ name: selectedCamera.name });
             void syncPreviewCameraDevice(selectedCamera.name, selectedCamera.index);
         }
 
@@ -355,37 +313,36 @@ const CameraSettings = () => {
             } else if (osPlatform === 'linux') {
                 alert(
                     t(
-                        'settings.cameraPermissionLinux',
-                        'Linux may not provide a direct camera permission window for this app. Close other apps using the webcam, restart Pose Nudge, and re-select the camera. If you use Flatpak or Snap, also verify portal/sandbox camera permissions.'
+                        'settings.cameraPermissionLinux'
                     )
                 );
             } else {
-                alert(t('settings.cameraPermissionDirect', '시스템 설정 > 개인 정보 보호 및 보안 > 카메라에서 앱 권한을 직접 허용해주세요.'));
+                alert(t('settings.cameraPermissionDirect'));
             }
         } catch (error) {
             console.error(t('settings.settingsErrorOpen', 'Failed to open settings window:'), error);
-            alert(t('settings.cameraPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 개인 정보 보호 및 보안 > 카메라로 이동하여 권한을 확인해주세요.'));
+            alert(t('settings.cameraPermissionManual'));
         }
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t('settings.cameraTitle', '카메라 설정')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                <div className="p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800 dark:bg-blue-900 dark:border-blue-600 dark:text-blue-200">
-                    <p>{t('settings.cameraGuide', '카메라가 작동하지 않는 경우, 아래 버튼을 클릭하여 시스템 설정에서 앱의 카메라 접근 권한을 허용해주세요.')}</p>
-                    <Button onClick={openCameraSettings} className="mt-2">
-                        {t('settings.cameraGoTo', '카메라 설정으로 이동')}
-                    </Button>
+        <section className="settings-card">
+            <header className="settings-card-header">
+                <h3>{t('settings.cameraTitle')}</h3>
+            </header>
+            <div className="settings-card-content space-y-4">
+                <div className="settings-callout">
+                    <p>{t('settings.cameraGuide')}</p>
+                    <button type="button" onClick={openCameraSettings} className="settings-action is-primary mt-2">
+                        {t('settings.cameraGoTo')}
+                    </button>
                 </div>
 
                 <div className="flex items-center justify-between">
-                    <span className="font-medium">{t('settings.cameraSelect', '분석에 사용할 카메라')}</span>
+                    <span className="font-medium">{t('settings.cameraSelect')}</span>
                     <Select value={selectedCameraIndex} onValueChange={handleCameraChange} disabled={cameras.length === 0}>
                         <SelectTrigger className="w-[250px]">
-                            <SelectValue placeholder={cameras.length === 0 ? t('settings.cameraNone', '사용 가능한 카메라 없음') : t('settings.cameraSelectPlaceholder', '카메라를 선택하세요')} />
+                            <SelectValue placeholder={cameras.length === 0 ? t('settings.cameraNone') : t('settings.cameraSelectPlaceholder')} />
                         </SelectTrigger>
                         <SelectContent>
                             {cameras.map((camera) => (
@@ -396,8 +353,8 @@ const CameraSettings = () => {
                         </SelectContent>
                     </Select>
                 </div>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -469,62 +426,63 @@ const UpdateSettings = () => {
             await invoke('restart_app');
         } catch (error) {
             console.error(t('settings.appErrorRestart', 'Failed to restart app:'), error);
-            alert(t('settings.appRestartManual', '앱을 수동으로 재시작해주세요.'));
+            alert(t('settings.appRestartManual'));
         }
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t('settings.updateTitle', '업데이트 설정')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                <div className="p-4 bg-green-50 border-l-4 border-green-400 text-green-800 dark:bg-green-900 dark:border-green-600 dark:text-green-200">
-                    <p>{t('settings.updateGuide', '새로운 버전이 있는지 확인하고 자동으로 업데이트를 설치합니다.')}</p>
-                    <Button
+        <section className="settings-card">
+            <header className="settings-card-header">
+                <h3>{t('settings.updateTitle')}</h3>
+            </header>
+            <div className="settings-card-content space-y-4">
+                <div className="settings-callout">
+                    <p>{t('settings.updateGuide')}</p>
+                    <button
+                        type="button"
                         onClick={checkForUpdates}
                         disabled={isChecking || isDownloading || isInstalling}
-                        className="mt-2"
+                        className="settings-action is-primary mt-2"
                     >
-                        {isChecking ? t('settings.checkingUpdate', '업데이트 확인 중...') : t('settings.checkUpdate', '업데이트 확인')}
-                    </Button>
+                        {isChecking ? t('settings.checkingUpdate') : t('settings.checkUpdate')}
+                    </button>
 
                     {updateInfo && (
                         <p className="mt-2 text-sm">
-                            {t('settings.updateFound', '업데이트 발견: {{version}} ({{date}})', { version: updateInfo.version, date: updateInfo.date })}
+                            {t('settings.updateFound', { version: updateInfo.version, date: updateInfo.date })}
                         </p>
                     )}
 
                     {isDownloading && (
                         <div className="mt-4">
-                            <p className="text-sm mb-2">{t('settings.updateDownloading', '다운로드 중... {{progress}}%', { progress })}</p>
+                            <p className="text-sm mb-2">{t('settings.updateDownloading', { progress })}</p>
                             <Progress value={progress} className="w-full" />
                         </div>
                     )}
 
                     {isInstalling && (
-                        <p className="mt-2 text-sm">{t('settings.updateInstalling', '설치 중...')}</p>
+                        <p className="mt-2 text-sm">{t('settings.updateInstalling')}</p>
                     )}
 
                     {installed && (
                         <div className="mt-4">
                             <p className="text-sm text-green-700 dark:text-green-300 mb-2">
-                                {t('settings.updateInstalled', '업데이트 설치 완료. 앱을 재시작해주세요.')}
+                                {t('settings.updateInstalled')}
                             </p>
-                            <Button onClick={handleRestart} variant="outline">
-                                {t('settings.restartApp', '앱 재시작')}
-                            </Button>
+                            <button type="button" onClick={handleRestart} className="settings-action is-secondary">
+                                {t('settings.restartApp')}
+                            </button>
                         </div>
                     )}
 
                     {!isChecking && !isDownloading && !isInstalling && !installed && !updateInfo && (
-                        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                            {t('settings.upToDate', '최신 버전입니다.')}
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            {t('settings.upToDate')}
                         </p>
                     )}
                 </div>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -537,23 +495,23 @@ const ThemeSettings = () => {
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>{t('settings.themeTitle', '테마 설정')}</CardTitle>
-            </CardHeader>
-            <CardContent>
+        <section className="settings-card">
+            <header className="settings-card-header">
+                <h3>{t('settings.themeTitle')}</h3>
+            </header>
+            <div className="settings-card-content">
                 <Select value={theme} onValueChange={handleThemeChange}>
                     <SelectTrigger className="w-[250px]">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="light">{t('settings.themeLight', '밝은 테마')}</SelectItem>
-                        <SelectItem value="dark">{t('settings.themeDark', '어두운 테마')}</SelectItem>
-                        <SelectItem value="system">{t('settings.themeSystem', '시스템 설정')}</SelectItem>
+                        <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
+                        <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
+                        <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
                     </SelectContent>
                 </Select>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -597,13 +555,7 @@ const NotificationSettings = () => {
     };
 
     const requestNotificationPermission = async () => {
-        try {
-            const result = await requestPermission();
-            setPermission(result === 'granted' ? 'granted' : result === 'denied' ? 'denied' : 'prompt');
-        } catch (error) {
-            console.error('Failed to request notification permission:', error);
-            setPermission('denied');
-        }
+        setPermission(await requestReminderPermission(true) ? 'granted' : 'denied');
     };
 
     const sendTestReminder = async () => {
@@ -628,35 +580,35 @@ const NotificationSettings = () => {
             } else if (osPlatform === 'windows') {
                 await open('ms-settings:notifications');
             } else {
-                alert(t('settings.notificationPermissionDirect', '시스템 설정 > 알림에서 앱의 알림 권한을 직접 허용해주세요.'));
+                alert(t('settings.notificationPermissionDirect'));
             }
         } catch (error) {
             console.error(t('settings.notificationErrorOpen', 'Failed to open notification settings:'), error);
-            alert(t('settings.notificationPermissionManual', '설정 창을 열 수 없습니다. 수동으로 시스템 설정 > 알림으로 이동하여 권한을 확인해주세요.'));
+            alert(t('settings.notificationPermissionManual'));
         }
     };
 
     return (
-        <Card className="overflow-hidden border-[#2f7d66]/20">
-            <CardHeader>
+        <section className="settings-card settings-reminder-card">
+            <header className="settings-card-header">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <CardTitle>{t('settings.notificationTitle', '可靠提醒')}</CardTitle>
+                        <h3>{t('settings.notificationTitle', '可靠提醒')}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
                             {t('settings.notificationSubtitle', '选择一种或多种提醒方式。悬浮提醒不会依赖系统通知横幅。')}
                         </p>
                     </div>
-                    <div className={`rounded-full px-3 py-1 text-xs font-semibold ${permission === 'granted' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                    <div className={`settings-permission-pill ${permission === 'granted' ? 'is-granted' : 'is-pending'}`}>
                         {permission === 'granted'
                             ? t('settings.notificationGranted', '系统通知已授权')
                             : t('settings.notificationNotGranted', '系统通知未授权')}
                     </div>
                 </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
+            </header>
+            <div className="settings-card-content space-y-5">
                 <div className="grid gap-3 md:grid-cols-3">
-                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40">
-                        <Bell className="mt-0.5 h-5 w-5 text-[#2f7d66]" />
+                    <label className="settings-channel-option">
+                        <Bell className="mt-0.5 h-5 w-5 text-[var(--brand)]" />
                         <span className="min-w-0 flex-1">
                             <span className="block font-semibold">{t('settings.channelNative', '系统通知')}</span>
                             <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelNativeDesc', '遵循 macOS / Windows 的通知设置。')}</span>
@@ -664,24 +616,24 @@ const NotificationSettings = () => {
                         <Switch checked={preferences.native_notification} onCheckedChange={(checked) => setChannel('native_notification', checked)} />
                     </label>
 
-                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#2f7d66]/30 bg-[#edf5f1] p-4 text-[#14231f] transition-colors hover:bg-[#e4f0ea] dark:bg-[#17372f] dark:text-white">
-                        <MonitorUp className="mt-0.5 h-5 w-5 text-[#2f7d66] dark:text-[#7bc4aa]" />
+                    <label className="settings-channel-option is-highlighted">
+                        <MonitorUp className="mt-0.5 h-5 w-5 text-[var(--brand)]" />
                         <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2 font-semibold">
                                 {t('settings.channelFloating', '顶部悬浮提醒')}
-                                <span className="rounded-full bg-[#2f7d66] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white">Free</span>
+                                <span className="settings-tier-badge">{t('settings.freeLabel', '免费')}</span>
                             </span>
                             <span className="mt-1 block text-xs opacity-70">{t('settings.channelFloatingDesc', '系统通知关闭时也能看见。')}</span>
                         </span>
                         <Switch checked={preferences.floating_window} onCheckedChange={(checked) => setChannel('floating_window', checked)} />
                     </label>
 
-                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40">
-                        <Moon className="mt-0.5 h-5 w-5 text-[#d9654b]" />
+                    <label className="settings-channel-option">
+                        <Moon className="mt-0.5 h-5 w-5 text-[var(--accent-warm)]" />
                         <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2 font-semibold">
                                 {t('settings.channelDim', '屏幕柔和变暗')}
-                                <span className="rounded-full bg-[#14231f] px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-white">Pro</span>
+                                <span className="settings-tier-badge is-pro">{t('settings.proLabel', '进阶版')}</span>
                             </span>
                             <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelDimDesc', '用视觉场变化提醒，不打断输入。')}</span>
                         </span>
@@ -704,27 +656,27 @@ const NotificationSettings = () => {
                     </div>
                     <div className="flex flex-wrap gap-2">
                         {permission !== 'granted' && (
-                            <Button onClick={requestNotificationPermission} variant="outline">
+                            <button type="button" onClick={requestNotificationPermission} className="settings-action is-secondary">
                                 {t('settings.notificationRequest', '申请通知权限')}
-                            </Button>
+                            </button>
                         )}
-                        <Button onClick={sendTestReminder} className="bg-[#2f7d66] text-white hover:bg-[#276b58]">
+                        <button type="button" onClick={sendTestReminder} className="settings-action is-primary">
                             {t('settings.notificationTest', '发送测试提醒')}
-                        </Button>
-                        <Button onClick={openNotificationSettings} variant="ghost">
+                        </button>
+                        <button type="button" onClick={openNotificationSettings} className="settings-action is-quiet">
                             {t('settings.notificationGoTo', '打开系统设置')}
-                        </Button>
+                        </button>
                     </div>
                 </div>
 
                 {testStatus && (
-                    <p className="flex items-center gap-2 text-sm text-[#2f7d66]" role="status">
+                    <p className="flex items-center gap-2 text-sm text-[var(--brand)]" role="status">
                         <CheckCircle2 className="h-4 w-4" />
                         {testStatus}
                     </p>
                 )}
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 
@@ -769,26 +721,26 @@ const LicenseSettings = () => {
     };
 
     return (
-        <Card className="overflow-hidden border-[#14231f]/15">
-            <div className="h-1.5 bg-gradient-to-r from-[#2f7d66] via-[#e5a84b] to-[#d9654b]" />
-            <CardHeader>
+        <section className="settings-card settings-license-card">
+            <div className="settings-license-accent" />
+            <header className="settings-card-header">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                        <CardTitle className="flex items-center gap-2">
-                            <Sparkles className="h-5 w-5 text-[#e5a84b]" />
+                        <h3 className="flex items-center gap-2">
+                            <Sparkles className="h-5 w-5 text-[var(--accent-gold)]" />
                             OnePosture Pro
-                        </CardTitle>
+                        </h3>
                         <p className="mt-1 text-sm text-muted-foreground">
                             {t('settings.proSubtitle', '一次买断，解锁屏幕柔和变暗提醒；最多可激活 3 台设备。')}
                         </p>
                     </div>
                     <div className="text-left sm:text-right">
-                        <p className="text-2xl font-bold text-[#14231f] dark:text-white">¥39</p>
+                        <p className="text-2xl font-bold text-foreground">¥39</p>
                         <p className="text-xs text-muted-foreground">{t('settings.priceLine', 'China · lifetime / International US$4.99')}</p>
                     </div>
                 </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
+            </header>
+            <div className="settings-card-content space-y-4">
                 <div className="grid gap-2 text-sm sm:grid-cols-3">
                     <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureDim', '屏幕柔和变暗')}</p>
                     <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureOffline', '激活后永久离线使用')}</p>
@@ -809,15 +761,15 @@ const LicenseSettings = () => {
                                     value={licenseKey}
                                     onChange={(event) => setLicenseKey(event.target.value)}
                                     placeholder={t('settings.licensePlaceholder', '输入购买后收到的激活码')}
-                                    className="h-10 w-full rounded-md border bg-background pl-10 pr-3 text-sm outline-none focus:ring-2 focus:ring-[#2f7d66]"
+                                    className="settings-license-input"
                                 />
                             </div>
-                            <Button onClick={activate} disabled={activating || !licenseKey.trim()}>
+                            <button type="button" onClick={activate} disabled={activating || !licenseKey.trim()} className="settings-action is-primary">
                                 {activating ? t('settings.activating', '激活中…') : t('settings.activate', '激活 Pro')}
-                            </Button>
-                            <Button onClick={() => void open(purchaseUrl)} variant="outline">
+                            </button>
+                            <button type="button" onClick={() => void open(purchaseUrl)} className="settings-action is-secondary">
                                 {t('settings.buyPro', '购买激活码')}
-                            </Button>
+                            </button>
                         </div>
                         <p className="text-xs leading-5 text-muted-foreground">
                             {t('settings.activationGuide', '购买后，激活码会显示在 01MVP 订单页并发送到邮箱。首次激活需要联网，成功后可永久离线使用。')}
@@ -830,8 +782,8 @@ const LicenseSettings = () => {
                 )}
 
                 {activationStatus && <p className="text-sm text-muted-foreground" role="status">{activationStatus}</p>}
-            </CardContent>
-        </Card>
+            </div>
+        </section>
     );
 };
 

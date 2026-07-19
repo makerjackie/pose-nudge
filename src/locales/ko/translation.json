@@ -75,7 +75,8 @@
     "navigation": "기본 탐색",
     "localOnly": "기기 내 처리",
     "pauseMonitoring": "일시정지",
-    "startMonitoring": "시작"
+    "startMonitoring": "시작",
+    "loading": "불러오는 중…"
   },
   "about": {
     "title": "처음부터 열린 설계",
@@ -91,6 +92,7 @@
     "sourceCode": "소스 코드",
     "license": "AGPL 라이선스",
     "upstream": "원본 프로젝트",
+    "updateEyebrow": "업데이트",
     "updateTitle": "자세 도구를 최신 상태로 유지",
     "updateDesc": "서명된 업데이트는 공개 GitHub Release를 통해 배포됩니다.",
     "appInfo": "앱 정보",
@@ -219,8 +221,10 @@
     "channelNative": "시스템 알림",
     "channelNativeDesc": "macOS 또는 Windows 알림 설정을 따릅니다.",
     "channelFloating": "상단 플로팅 알림",
+    "freeLabel": "무료",
     "channelFloatingDesc": "시스템 알림이 꺼져 있어도 표시됩니다.",
     "channelDim": "화면 부드럽게 어둡게",
+    "proLabel": "Pro",
     "channelDimDesc": "입력을 방해하지 않고 시각적 변화로 알려줍니다.",
     "channelSound": "알림 소리",
     "channelSoundDesc": "시스템 알림과 함께 재생됩니다.",
@@ -265,6 +269,9 @@
     "monitoringStopError": "모니터링 중지에 실패했습니다.",
     "calibrationNotReady": "모델, 웹캠 또는 저장소가 준비되지 않았습니다.",
     "calibrationError": "자세 캘리브레이션에 실패했습니다: {{error}}",
+    "calibrationInsufficientFrames": "선명한 기준 프레임이 부족합니다({{detected}}/{{minimum}}). 카메라 정면을 보고 다시 시도하세요.",
+    "calibrationNoSamples": "기준 프레임을 촬영하지 못했습니다. 카메라 권한을 확인한 뒤 다시 시도하세요.",
+    "calibrationNoKeypoints": "사용 가능한 자세 랜드마크를 감지하지 못했습니다. 머리와 양쪽 어깨가 보이게 해주세요.",
     "permissionError": "웹캠에 접근할 수 없습니다. 카메라 권한을 확인해주세요.",
     "permissionErrorLinux": "Linux에서 웹캠 접근에 실패했습니다. 다른 앱이 카메라를 사용 중인지 확인하고 설정에서 카메라를 다시 선택해 주세요.",
     "previewFallback": "브라우저 웹캠 접근에 실패해 분석용 카메라 화면으로 전환합니다.",

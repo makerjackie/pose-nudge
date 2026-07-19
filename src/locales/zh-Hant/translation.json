@@ -15,7 +15,8 @@
     "navigation": "主導覽",
     "localOnly": "僅在本機",
     "pauseMonitoring": "暫停",
-    "startMonitoring": "開始"
+    "startMonitoring": "開始",
+    "loading": "正在載入…"
   },
   "dashboard": {
     "eyebrow": "溫和引導你的坐姿",
@@ -59,6 +60,7 @@
     "sourceCode": "檢視原始碼",
     "license": "AGPL 授權條款",
     "upstream": "原始專案",
+    "updateEyebrow": "應用程式更新",
     "updateTitle": "保持應用程式為最新版本",
     "updateDesc": "簽章更新透過公開的 GitHub Release 發布。"
   },
@@ -77,6 +79,7 @@
     "priceLine": "中國區永久買斷 / 海外 US$4.99",
     "languageTitle": "語言設定",
     "languagePlaceholder": "請選擇語言",
+    "languageKorean": "韓語",
     "languageChinese": "簡體中文",
     "languageTraditional": "繁體中文",
     "detectionTitle": "偵測與通知設定",
@@ -87,8 +90,10 @@
     "channelNative": "系統通知",
     "channelNativeDesc": "遵循 macOS 或 Windows 的通知設定。",
     "channelFloating": "頂部懸浮提醒",
+    "freeLabel": "免費",
     "channelFloatingDesc": "系統通知關閉時也能看見。",
     "channelDim": "螢幕柔和變暗",
+    "proLabel": "進階版",
     "channelDimDesc": "用視覺變化提醒，不打斷輸入。",
     "channelSound": "提醒聲音",
     "channelSoundDesc": "傳送系統通知時播放。",
@@ -125,7 +130,10 @@
     "startGuide": "請讓頭部和雙肩清楚出現在畫面中再開始。",
     "monitoringToggleError": "無法切換監控狀態，請檢查攝影機權限後再試一次。",
     "lowConfidenceTitle": "暫時看不清姿勢",
-    "lowConfidenceDesc": "請讓頭部和雙肩完整出現在畫面中；本幀不會計分，也不會觸發提醒。"
+    "lowConfidenceDesc": "請讓頭部和雙肩完整出現在畫面中；本幀不會計分，也不會觸發提醒。",
+    "calibrationInsufficientFrames": "清晰的基準畫面不足（{{detected}}/{{minimum}}）。請正對攝影機後重試。",
+    "calibrationNoSamples": "沒有拍到基準畫面。請檢查攝影機權限後重試。",
+    "calibrationNoKeypoints": "未偵測到可用的姿勢關鍵點。請確保頭部和雙肩都清晰可見。"
   },
   "reminder": {
     "testLabel": "OnePosture · 測試提醒",
