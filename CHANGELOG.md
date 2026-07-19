@@ -7,6 +7,14 @@ All notable changes to **OnePosture** will be documented in this file. The origi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-07-20
+
+### Changed
+
+- Replaced the complete OnePosture logo system with the selected neutral paper-cut posture scene and a true full-bleed square master.
+- Regenerated macOS, Windows, iOS, Android, in-app, website, and menu-bar assets from the new master.
+- Added distinct active and paused menu-bar icons so monitoring state remains legible at small sizes.
+
 ## [2.2.1] - 2026-07-20
 
 ### Fixed

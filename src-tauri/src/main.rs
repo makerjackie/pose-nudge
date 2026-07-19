@@ -289,13 +289,7 @@ async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<
     lock_or_recover(&state.reminder_engine).reset();
 
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
-        if let Some(default_icon) = app.default_window_icon() {
-            if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
-                error!("Failed to update tray icon: {}", e);
-            }
-        } else {
-            warn!("Default window icon not found.");
-        }
+        set_tray_icon(&app, tray, "monitoring_on.png");
     }
     update_tray_status(&state, TrayStatus::Monitoring);
     let _ = app.emit(
@@ -354,24 +348,7 @@ async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(
     stop_and_release_camera(&state, "stop_monitoring command");
 
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
-        if let Ok(monitoring_off_icon_path) = app
-            .path()
-            .resolve("icons/monitoring_off.png", BaseDirectory::Resource)
-        {
-            if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
-                if let Ok(monitoring_off_icon) = Image::from_bytes(&bytes) {
-                    if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-                        error!("Failed to update tray icon: {}", e);
-                    }
-                } else {
-                    error!("Failed to create icon image");
-                }
-            } else {
-                error!("Failed to read icon file");
-            }
-        } else {
-            error!("Failed to resolve icon path");
-        }
+        set_tray_icon(&app, tray, "monitoring_off.png");
     }
     update_tray_status(&state, TrayStatus::Paused);
     for label in ["reminder", "screen-dim"] {
@@ -473,6 +450,27 @@ fn update_tray_status(state: &AppState, status: TrayStatus) {
     }
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
         let _ = tray.set_tooltip(Some(format!("OnePosture · {}", label)));
+    }
+}
+
+fn load_tray_icon(app: &AppHandle, filename: &str) -> Result<Image<'static>, String> {
+    let icon_path = app
+        .path()
+        .resolve(format!("icons/{filename}"), BaseDirectory::Resource)
+        .map_err(|error| format!("Failed to resolve tray icon {filename}: {error}"))?;
+
+    Image::from_path(&icon_path)
+        .map_err(|error| format!("Failed to load tray icon {}: {error}", icon_path.display()))
+}
+
+fn set_tray_icon(app: &AppHandle, tray: &TrayIcon, filename: &str) {
+    match load_tray_icon(app, filename) {
+        Ok(icon) => {
+            if let Err(error) = tray.set_icon(Some(icon)) {
+                error!("Failed to set tray icon {filename}: {error}");
+            }
+        }
+        Err(error) => error!("{error}"),
     }
 }
 
@@ -1132,13 +1130,11 @@ pub fn run() {
                 }
             });
 
-            let default_icon = app
-                .default_window_icon()
-                .cloned()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Default window icon is missing"))?;
+            let paused_icon = load_tray_icon(app.handle(), "monitoring_off.png")
+                .map_err(std::io::Error::other)?;
 
             let tray = TrayIconBuilder::new()
-                .icon(default_icon)
+                .icon(paused_icon)
                 .tooltip("OnePosture · Paused")
                 .menu(&menu)
                 .on_menu_event(move |app, event| {
@@ -1156,13 +1152,7 @@ pub fn run() {
                             *lock_or_recover(&state.force_capture_now) = true;
                             lock_or_recover(&state.reminder_engine).reset();
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
-                                if let Some(default_icon) = app.default_window_icon() {
-                                    if let Err(e) = tray.set_icon(Some(default_icon.clone())) {
-                                        error!("Failed to update tray icon: {}", e);
-                                    }
-                                } else {
-                                    warn!("Default window icon not found; skipping tray icon update.");
-                                }
+                                set_tray_icon(app, tray, "monitoring_on.png");
                             }
                             update_tray_status(&state, TrayStatus::Monitoring);
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": true }));
@@ -1174,21 +1164,7 @@ pub fn run() {
                             lock_or_recover(&state.reminder_engine).reset();
                             stop_and_release_camera(&state, "tray stop_monitoring action");
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
-                                if let Ok(monitoring_off_icon_path) = app.path().resolve("icons/monitoring_off.png", BaseDirectory::Resource) {
-                                    if let Ok(bytes) = fs::read(&monitoring_off_icon_path) {
-                                        if let Ok(monitoring_off_icon) = Image::from_bytes(&bytes) {
-                                            if let Err(e) = tray.set_icon(Some(monitoring_off_icon)) {
-                                                error!("Failed to update tray icon: {}", e);
-                                            }
-                                        } else {
-                                            error!("Failed to create icon image");
-                                        }
-                                    } else {
-                                        error!("Failed to read icon file");
-                                    }
-                                } else {
-                                    error!("Failed to resolve icon path");
-                                }
+                                set_tray_icon(app, tray, "monitoring_off.png");
                             }
                             update_tray_status(&state, TrayStatus::Paused);
                             for label in ["reminder", "screen-dim"] {
