@@ -123,8 +123,7 @@ const Dashboard = ({ isMonitoring, onOpenMonitoring }: { isMonitoring: boolean; 
     <section className="page-stack dashboard-page">
       <header className="page-heading dashboard-heading">
         <div>
-          <p className="eyebrow">{t('dashboard.eyebrow', 'Your posture, gently guided')}</p>
-          <h1>{t('dashboard.title', 'A calmer way to sit well')}</h1>
+          <h1>{t('nav.dashboard', 'Dashboard')}</h1>
           <p>{t('dashboard.subtitle', 'OnePosture watches for sustained posture drift and only nudges you when the signal is reliable.')}</p>
         </div>
         <button type="button" className="icon-action" onClick={() => void loadData()} aria-label={t('dashboard.refresh')}>
@@ -132,43 +131,33 @@ const Dashboard = ({ isMonitoring, onOpenMonitoring }: { isMonitoring: boolean; 
         </button>
       </header>
 
-      <article className={`posture-hero ${isMonitoring ? 'is-live' : ''}`}>
-        <div className="hero-copy">
+      <article className={`session-overview ${isMonitoring ? 'is-live' : ''}`}>
+        <div className="session-copy">
           <span className="live-indicator"><i />{isMonitoring ? t('dashboard.live', 'Monitoring now') : t('dashboard.paused', 'Ready when you are')}</span>
           <h2>{isMonitoring ? t('dashboard.liveTitle', 'Your posture field is active') : t('dashboard.pausedTitle', 'Start a focused posture session')}</h2>
           <p>{isMonitoring ? t('dashboard.liveDesc', 'You can close this window. OnePosture keeps working from the menu bar.') : t('dashboard.pausedDesc', 'Preview the camera, set a comfortable baseline, then let OnePosture stay quietly in the menu bar.')}</p>
-          <button type="button" className="hero-action" onClick={onOpenMonitoring}>
+          <button type="button" className="session-action" onClick={onOpenMonitoring}>
             <Camera />{t('dashboard.openMonitoring', 'Open live posture')}<ArrowRight />
           </button>
         </div>
-        <div className="score-field" aria-label={t('dashboard.scoreTitle')}>
-          <div className="score-axis"><span /><span /><span /></div>
+        <div className="score-summary" aria-label={t('dashboard.scoreTitle')}>
+          <span>{t('dashboard.today', 'Today')}</span>
           <strong>{stats.averageScore || '—'}</strong>
-          <span>{t('dashboard.scoreUnit')}</span>
+          <small>{t('dashboard.scoreUnit')}</small>
           <small>{scoreMessage}</small>
         </div>
       </article>
 
-      <div className="readiness-strip" aria-label={t('dashboard.readiness', 'Readiness')}>
-        <div><span className="readiness-icon"><Eye /></span><p><strong>{t('dashboard.localAnalysis', 'Local analysis')}</strong><small>{t('dashboard.localAnalysisDesc', 'Frames stay on this device')}</small></p><Check /></div>
-        <div><span className="readiness-icon"><BellRing /></span><p><strong>{t('dashboard.reminderSetup', 'Reminder coverage')}</strong><small>{t('dashboard.reminderSetupDesc', '{{count}} channels enabled', { count: reminderChannels })}</small></p><Check /></div>
-        <div><span className="readiness-icon"><ShieldCheck /></span><p><strong>{t('dashboard.systemNotice', 'System notification')}</strong><small>{notificationsReady ? t('dashboard.permissionReady', 'Permission ready') : t('dashboard.permissionOptional', 'Optional — floating reminders still work')}</small></p><span className={notificationsReady ? 'state-ready' : 'state-optional'}>{notificationsReady ? t('dashboard.ready', 'Ready') : t('dashboard.optional', 'Optional')}</span></div>
+      <div className="summary-grid">
+        <div><span><Clock3 /></span><p><small>{t('dashboard.stats.totalTime', 'Session time')}</small><strong>{formatMinutes(stats.sessionTime, t)}</strong></p></div>
+        <div><span><Target /></span><p><small>{t('dashboard.goodPosture', 'Good posture')}</small><strong>{goodShare}%</strong></p></div>
+        <div><span><BellRing /></span><p><small>{t('dashboard.stats.todayDetectionCount', 'Posture drifts')}</small><strong>{stats.detectionCountToday}</strong></p></div>
+        <div><span><Eye /></span><p><small>{t('dashboard.stats.totalSessions', 'Days tracked')}</small><strong>{stats.totalSessions}</strong></p></div>
       </div>
 
       <div className="dashboard-grid">
-        <section className="insight-card snapshot-card">
-          <div className="section-heading"><div><p className="eyebrow">{t('dashboard.today', 'Today')}</p><h2>{t('dashboard.snapshot', 'Posture snapshot')}</h2></div><Target /></div>
-          <div className="snapshot-metric"><strong>{goodShare}%</strong><span>{t('dashboard.goodPosture', 'Good posture')}</span></div>
-          <div className="snapshot-bar"><span style={{ width: `${goodShare}%` }} /></div>
-          <div className="metric-row">
-            <div><strong>{formatMinutes(stats.sessionTime, t)}</strong><span><Clock3 />{t('dashboard.stats.totalTime', 'Session time')}</span></div>
-            <div><strong>{stats.detectionCountToday}</strong><span><BellRing />{t('dashboard.stats.todayDetectionCount', 'Posture drifts')}</span></div>
-            <div><strong>{stats.totalSessions}</strong><span><Target />{t('dashboard.stats.totalSessions', 'Days tracked')}</span></div>
-          </div>
-        </section>
-
         <section className="insight-card trend-card">
-          <div className="section-heading"><div><p className="eyebrow">{t('dashboard.lastSixDays', 'Last six days')}</p><h2>{t('dashboard.chartTitle')}</h2></div></div>
+          <div className="section-heading"><div><h2>{t('dashboard.chartTitle')}</h2><p>{t('dashboard.lastSixDays', 'Last six days')}</p></div></div>
           {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={230}>
               <AreaChart data={chartData} margin={{ top: 18, right: 8, left: -24, bottom: 0 }}>
@@ -189,10 +178,19 @@ const Dashboard = ({ isMonitoring, onOpenMonitoring }: { isMonitoring: boolean; 
             <div className="chart-empty"><span><Target /></span><strong>{t('dashboard.chartEmptyTitle', 'Your trend starts with the first session')}</strong><p>{t('dashboard.chartEmptyDesc', 'A few posture checks are enough to begin drawing a useful pattern.')}</p></div>
           )}
         </section>
+
+        <section className="insight-card readiness-card" aria-label={t('dashboard.readiness', 'Readiness')}>
+          <div className="section-heading"><div><h2>{t('dashboard.readiness', 'Readiness')}</h2><p>{t('dashboard.localAnalysisDesc', 'Frames stay on this device')}</p></div><ShieldCheck /></div>
+          <div className="readiness-list">
+            <div><span><Eye /></span><p><strong>{t('dashboard.localAnalysis', 'Local analysis')}</strong><small>{t('dashboard.localAnalysisDesc', 'Frames stay on this device')}</small></p><Check /></div>
+            <div><span><BellRing /></span><p><strong>{t('dashboard.reminderSetup', 'Reminder coverage')}</strong><small>{t('dashboard.reminderSetupDesc', '{{count}} channels enabled', { count: reminderChannels })}</small></p><Check /></div>
+            <div><span><ShieldCheck /></span><p><strong>{t('dashboard.systemNotice', 'System notification')}</strong><small>{notificationsReady ? t('dashboard.permissionReady', 'Permission ready') : t('dashboard.permissionOptional', 'Optional — floating reminders still work')}</small></p><b className={notificationsReady ? 'state-ready' : 'state-optional'}>{notificationsReady ? t('dashboard.ready', 'Ready') : t('dashboard.optional', 'Optional')}</b></div>
+          </div>
+        </section>
       </div>
 
       <section className="micro-coaching">
-        <div className="section-heading"><div><p className="eyebrow">{t('dashboard.tipsTitle')}</p><h2>{t('dashboard.coachingTitle', 'Small resets, lasting comfort')}</h2></div><Sparkles /></div>
+        <div className="section-heading"><div><h2>{t('dashboard.coachingTitle', 'Small resets, lasting comfort')}</h2><p>{t('dashboard.tipsTitle')}</p></div><Sparkles /></div>
         <div className="coaching-grid">
           {tips.map((tip, index) => <div key={tip}><span>0{index + 1}</span><p>{t(`dashboard.tips.${tip}`)}</p></div>)}
         </div>

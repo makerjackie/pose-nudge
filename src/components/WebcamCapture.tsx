@@ -17,8 +17,8 @@ import {
   XCircle,
   PlayCircle,
   StopCircle,
-  Lightbulb,
   Cpu,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface PostureAnalysis {
@@ -28,6 +28,9 @@ interface PostureAnalysis {
   recommendations: string[];
   confidence?: number;
   reliable?: boolean;
+  baseline_ready?: boolean;
+  head_deviation?: number;
+  shoulder_deviation?: number;
 }
 
 const isValidPreviewFramePayload = (payload: string): boolean =>
@@ -61,21 +64,53 @@ const WebcamCapture = () => {
   const [calibratedImage, setCalibratedImage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
-  const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
   const [backendPreviewFrame, setBackendPreviewFrame] = useState<string | null>(null);
   const [useBackendPreview, setUseBackendPreview] = useState(false);
-  const shouldUseBackendPreview = useBackendPreview || (
-    isMonitoring
-    && currentPlatform === 'windows'
-  );
+  // While monitoring, show the exact frame analyzed by the Rust camera pipeline.
+  // This avoids a misleading second WebView stream with different crop/resolution.
+  const shouldUseBackendPreview = useBackendPreview || isMonitoring;
 
   const videoConstraints = useMemo(
     () => ({
-      facingMode: 'user',
-      deviceId: selectedDeviceId,
+      ...(selectedDeviceId
+        ? { deviceId: { exact: selectedDeviceId } }
+        : { facingMode: 'user' }),
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      aspectRatio: { ideal: 16 / 9 },
     }),
     [selectedDeviceId]
   );
+
+  const captureBackendCalibrationFrame = useCallback(async (): Promise<string> => {
+    return new Promise<string>((resolve, reject) => {
+      let disposed = false;
+      let unlisten: (() => void) | undefined;
+      const timeout = window.setTimeout(() => {
+        disposed = true;
+        unlisten?.();
+        reject(new Error('CALIBRATION_FRAME_TIMEOUT'));
+      }, 5000);
+
+      void listen<string>('camera-preview-frame', (event) => {
+        const frame = event.payload?.trim();
+        if (disposed || !frame || !isValidPreviewFramePayload(frame)) return;
+        disposed = true;
+        window.clearTimeout(timeout);
+        unlisten?.();
+        resolve(frame);
+      }).then((dispose) => {
+        unlisten = dispose;
+        if (disposed) dispose();
+        else invoke('request_preview_frame').catch((requestError) => {
+          disposed = true;
+          window.clearTimeout(timeout);
+          dispose();
+          reject(requestError);
+        });
+      }).catch(reject);
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,7 +182,9 @@ const WebcamCapture = () => {
     try {
       const imageSamples: string[] = [];
       if (shouldUseBackendPreview && backendPreviewFrame) {
-        imageSamples.push(backendPreviewFrame);
+        for (let index = 0; index < 5; index += 1) {
+          imageSamples.push(await captureBackendCalibrationFrame());
+        }
       } else {
         for (let index = 0; index < 5; index += 1) {
           const frame = webcamRef.current?.getScreenshot();
@@ -178,15 +215,7 @@ const WebcamCapture = () => {
     } finally {
         setTimeout(() => setCalibrationStatus('idle'), 3000);
     }
-  }, [backendPreviewFrame, isModelInitialized, shouldUseBackendPreview, store, t]);
-
-  useEffect(() => {
-    try {
-      setCurrentPlatform(platform());
-    } catch (platformError) {
-      console.error('Failed to resolve platform:', platformError);
-    }
-  }, []);
+  }, [backendPreviewFrame, captureBackendCalibrationFrame, isModelInitialized, shouldUseBackendPreview, store, t]);
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -310,6 +339,13 @@ const WebcamCapture = () => {
   };
   
   const isReadyForUI = isWebcamReady && isModelInitialized;
+  const confidencePercent = Math.round((analysisResult?.confidence ?? 0) * 100);
+  const headDeviationPercent = Math.round((analysisResult?.head_deviation ?? 0) * 100);
+  const shoulderDeviationPercent = Math.round((analysisResult?.shoulder_deviation ?? 0) * 100);
+  const score = analysisResult?.posture_score ?? null;
+  const needsCalibration = Boolean(
+    isMonitoring && analysisResult?.reliable !== false && analysisResult?.baseline_ready === false,
+  );
 
   const toggleMonitoring = async () => {
     try {
@@ -324,17 +360,16 @@ const WebcamCapture = () => {
     <section className="page-stack monitoring-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">{t('webcam.eyebrow', 'Live posture field')}</p>
-          <h1>{t('webcam.title', 'See what OnePosture sees')}</h1>
-          <p>{t('webcam.subtitle', 'Set a comfortable upright baseline, then let confidence-aware detection handle the rest.')}</p>
+          <h1>{t('nav.monitoring', 'Live posture')}</h1>
+          <p className="privacy-note"><ShieldCheck />{t('webcam.privacyNote', 'All processing happens on this device. Video is never uploaded.')}</p>
         </div>
       </header>
 
       <div className="monitoring-layout">
         <section className="camera-stage">
           <header className="camera-stage-header">
-            <p>{t('webcam.cameraPreview', 'Private camera preview')}</p>
-            <span className={isMonitoring ? 'is-live' : ''}><i />{isMonitoring ? t('webcam.monitoringActiveStatus') : t('webcam.monitoringInactiveStatus')}</span>
+            <p><Camera />{t('webcam.cameraPreview', 'Private camera preview')}</p>
+            <span><ShieldCheck />{t('shell.localOnly', 'On-device')}</span>
           </header>
           <div className="camera-frame">
             {shouldUseBackendPreview ? (
@@ -351,23 +386,37 @@ const WebcamCapture = () => {
                 onUserMedia={onUserMedia}
                 onUserMediaError={onUserMediaError}
                 screenshotFormat="image/jpeg"
+                forceScreenshotSourceSize
               />
             )}
+            <div className="framing-guide" aria-hidden="true"><i /><i /><i /><i /><span /><b /></div>
             <div className={`camera-outline ${getPostureStatusColor(isMonitoring ? analysisResult?.posture_score : null)}`} />
             {isMonitoring && analysisResult?.reliable !== false && analysisResult?.posture_score != null && (
               <div className="camera-score"><strong>{analysisResult.posture_score}</strong><span>{t('webcam.currentScore')}</span></div>
             )}
           </div>
+          <footer className="camera-caption"><ShieldCheck />{t('webcam.previewGuide', 'Keep your head and both shoulders inside the guide. The full camera frame is shown without cropping.')}</footer>
         </section>
 
         <aside className="monitor-side">
           <section className="control-card">
-            <div className={`monitor-status ${isMonitoring ? 'is-live' : ''}`}>
-              <span>{isMonitoring ? <Activity /> : <StopCircle />}</span>
-              <p>
-                <strong>{isMonitoring ? t('webcam.monitoringActiveStatus') : t('webcam.monitoringInactiveStatus')}</strong>
-                <small>{isMonitoring ? t('webcam.backgroundGuide', 'You may close the window; monitoring continues from the menu bar.') : t('webcam.startGuide', 'Start when your head and shoulders are clearly visible.')}</small>
-              </p>
+            <header className="card-title-row">
+              <h2>{t('webcam.currentStatus', 'Current status')}</h2>
+              <span className={isMonitoring ? 'status-dot is-live' : 'status-dot'}><i />{isMonitoring ? t('webcam.active', 'Active') : t('webcam.monitoringInactiveStatus')}</span>
+            </header>
+            <div className="posture-status">
+              <span className={(needsCalibration || (score != null && score < 80)) ? 'is-warning' : ''}>{(needsCalibration || (score != null && score < 80)) ? <Activity /> : <CheckCircle />}</span>
+              <p><strong>{needsCalibration ? t('webcam.calibrationRequiredTitle', 'Set your posture baseline') : score == null ? t('webcam.waitingForSignal', 'Waiting for signal') : score >= 80 ? t('webcam.goodPosture', 'Good posture') : t('webcam.postureDrifting', 'Posture drifting')}</strong><small>{needsCalibration ? t('webcam.calibrationRequiredDesc', 'Hold a comfortable upright posture, then save it below. OnePosture will not show a misleading score before calibration.') : score == null ? t('webcam.startGuide', 'Start when your head and shoulders are clearly visible.') : score >= 80 ? t('webcam.goodPostureDesc', 'Your position is close to the baseline.') : t('webcam.postureDriftingDesc', 'A sustained deviation will trigger your reminder.')}</small></p>
+              <div className="compact-score"><strong>{score ?? '—'}</strong><span>{t('dashboard.scoreUnit')}</span></div>
+            </div>
+            <div className="confidence-meter">
+              <p><span>{t('webcam.confidence', 'Confidence')}</span><strong>{isMonitoring && analysisResult ? `${confidencePercent}%` : '—'}</strong></p>
+              <div><span style={{ width: `${confidencePercent}%` }} /></div>
+              <small>{analysisResult?.reliable === false ? t('webcam.lowConfidenceTitle', 'Posture is not clear yet') : t('webcam.reliableSignal', 'Reliable signal')}</small>
+            </div>
+            <div className="deviation-list">
+              <div><p><span>{t('webcam.headDeviation', 'Head drift')}</span><strong>{isMonitoring && analysisResult?.reliable !== false && !needsCalibration ? `${headDeviationPercent}%` : '—'}</strong></p><div><span style={{ width: `${needsCalibration ? 0 : Math.min(100, headDeviationPercent / 2)}%` }} /></div></div>
+              <div><p><span>{t('webcam.shoulderDeviation', 'Shoulder level')}</span><strong>{isMonitoring && analysisResult?.reliable !== false && !needsCalibration ? `${shoulderDeviationPercent}%` : '—'}</strong></p><div><span style={{ width: `${needsCalibration ? 0 : Math.min(100, shoulderDeviationPercent / 2)}%` }} /></div></div>
             </div>
             <button type="button" className={`monitor-primary ${isMonitoring ? 'is-stop' : ''}`} onClick={toggleMonitoring}>
               {isMonitoring ? <StopCircle /> : <PlayCircle />}
@@ -381,8 +430,28 @@ const WebcamCapture = () => {
             {initializationProgress && <p className="inline-progress">{initializationProgress}</p>}
           </section>
 
+          <section className="analysis-card">
+            <div className="card-title-row"><h2>{t('webcam.currentDetected')}</h2></div>
+            <div className="analysis-content">
+              {isMonitoring && analysisResult ? (
+                analysisResult.reliable === false ? (
+                  <div className="confidence-warning"><strong>{t('webcam.lowConfidenceTitle', 'Posture is not clear yet')}</strong><p>{t('webcam.lowConfidenceDesc', 'Keep your head and both shoulders visible. This frame will not be scored or trigger a reminder.')}</p></div>
+                ) : needsCalibration ? (
+                  <div className="confidence-warning"><strong>{t('webcam.calibrationRequiredTitle', 'Set your posture baseline')}</strong><p>{t('webcam.calibrationRequiredDesc', 'Hold a comfortable upright posture, then save it below. OnePosture will not show a misleading score before calibration.')}</p></div>
+                ) : (
+                  <>
+                    <div className={`analysis-signal ${analysisResult.turtle_neck ? 'is-bad' : 'is-good'}`}><span>{analysisResult.turtle_neck ? <XCircle /> : <CheckCircle />}{t('webcam.headPosition')}</span><strong>{analysisResult.turtle_neck ? t('webcam.caution') : t('webcam.normal')}</strong></div>
+                    <div className={`analysis-signal ${analysisResult.shoulder_misalignment ? 'is-bad' : 'is-good'}`}><span>{analysisResult.shoulder_misalignment ? <XCircle /> : <CheckCircle />}{t('webcam.shoulderMisalign')}</span><strong>{analysisResult.shoulder_misalignment ? t('webcam.imbalance') : t('webcam.normal')}</strong></div>
+                  </>
+                )
+              ) : (
+                <div className="analysis-empty"><CameraOff /><p>{t('webcam.startMonitoringDesc', 'Start monitoring to see live posture signals.')}</p></div>
+              )}
+            </div>
+          </section>
+
           <section className="calibration-card">
-            <h3>{t('webcam.calibration')}</h3>
+            <div className="card-title-row"><h2>{t('webcam.calibration')}</h2><span className={analysisResult?.baseline_ready ? 'baseline-state is-ready' : 'baseline-state'}>{analysisResult?.baseline_ready ? t('webcam.baselineReady', 'Baseline ready') : t('webcam.baselineNeeded', 'Recommended')}</span></div>
             <p>{t('webcam.calibrationGuide')}</p>
             <button type="button" className="calibration-action" onClick={handleCalibrate} disabled={!isReadyForUI || calibrationStatus === 'calibrating'}>
               {calibrationStatus === 'calibrating' ? t('webcam.saving') : t('webcam.setCurrentPosture')}
@@ -397,27 +466,6 @@ const WebcamCapture = () => {
             )}
           </section>
         </aside>
-
-        <section className="analysis-card">
-          <div className="section-heading"><div><p className="eyebrow">{t('webcam.realtimeStatus')}</p><h3>{t('webcam.currentDetected')}</h3></div></div>
-          <div className="analysis-content">
-            {isMonitoring && analysisResult ? (
-              analysisResult.reliable === false ? (
-                <div className="confidence-warning"><strong>{t('webcam.lowConfidenceTitle', 'Posture is not clear yet')}</strong><p>{t('webcam.lowConfidenceDesc', 'Keep your head and both shoulders visible. This frame will not be scored or trigger a reminder.')}</p></div>
-              ) : (
-                <>
-                  <div className={`analysis-signal ${analysisResult.turtle_neck ? 'is-bad' : 'is-good'}`}><span>{analysisResult.turtle_neck ? <XCircle /> : <CheckCircle />}{t('webcam.headPosition')}</span><strong>{analysisResult.turtle_neck ? t('webcam.caution') : t('webcam.normal')}</strong></div>
-                  <div className={`analysis-signal ${analysisResult.shoulder_misalignment ? 'is-bad' : 'is-good'}`}><span>{analysisResult.shoulder_misalignment ? <XCircle /> : <CheckCircle />}{t('webcam.shoulderMisalign')}</span><strong>{analysisResult.shoulder_misalignment ? t('webcam.imbalance') : t('webcam.normal')}</strong></div>
-                  {analysisResult.recommendations.length > 0 && (
-                    <div className="recommendation-box"><strong><Lightbulb />{t('dashboard.tipsTitle')}</strong><ul>{analysisResult.recommendations.map((rec) => <li key={rec}>{t(rec.includes('.') ? `dashboard.${rec}` : `dashboard.tips.${rec}`)}</li>)}</ul></div>
-                  )}
-                </>
-              )
-            ) : (
-              <div className="analysis-empty"><CameraOff /><p>{t('webcam.startMonitoringDesc', 'Start monitoring to see live posture signals.')}</p></div>
-            )}
-          </div>
-        </section>
       </div>
       <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
         <DialogContent className="max-w-2xl">

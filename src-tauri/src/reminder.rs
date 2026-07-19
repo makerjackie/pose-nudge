@@ -97,10 +97,13 @@ impl ReminderEngine {
         preferences: &ReminderPreferences,
     ) -> ReminderDecision {
         match signal {
-            PostureSignal::Unreliable => ReminderDecision {
-                state: ReminderState::WaitingForSignal,
-                should_remind: false,
-            },
+            PostureSignal::Unreliable => {
+                self.bad_since = None;
+                ReminderDecision {
+                    state: ReminderState::WaitingForSignal,
+                    should_remind: false,
+                }
+            }
             PostureSignal::Good => {
                 self.bad_since = None;
                 ReminderDecision {
@@ -192,6 +195,33 @@ mod tests {
         engine.observe(PostureSignal::Bad, started, &preferences);
         engine.observe(
             PostureSignal::Good,
+            started + Duration::from_secs(8),
+            &preferences,
+        );
+
+        assert!(
+            !engine
+                .observe(
+                    PostureSignal::Bad,
+                    started + Duration::from_secs(12),
+                    &preferences,
+                )
+                .should_remind
+        );
+    }
+
+    #[test]
+    fn unreliable_signal_resets_the_sustained_timer() {
+        let mut engine = ReminderEngine::new();
+        let preferences = ReminderPreferences {
+            sustained_bad_seconds: 10,
+            ..ReminderPreferences::default()
+        };
+        let started = Instant::now();
+
+        engine.observe(PostureSignal::Bad, started, &preferences);
+        engine.observe(
+            PostureSignal::Unreliable,
             started + Duration::from_secs(8),
             &preferences,
         );

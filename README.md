@@ -1,6 +1,6 @@
 # OnePosture
 
-> **OnePosture 2.1:** a privacy-first posture companion for the OneApps family, built from the original [Pose Nudge](https://github.com/DDULDDUCK/pose-nudge) project. Original authorship and the full AGPL-3.0 history are preserved.
+> **OnePosture 2.2:** a privacy-first posture companion for the OneApps family, built from the original [Pose Nudge](https://github.com/DDULDDUCK/pose-nudge) project. Original authorship and the full AGPL-3.0 history are preserved.
 
 The app is open source under AGPL-3.0. Core posture monitoring, native notifications, and floating reminders are free. OnePosture Pro is a ¥39 / US$4.99 one-time purchase that unlocks the screen-dimming reminder on up to three devices. The first activation is online; afterward the signed entitlement works permanently offline. The independent 01MVP payment/license service is not part of this repository and communicates through a narrow HTTP API. See [the product and commercialization plan](docs/ONEPOSTURE_PRODUCT_PLAN.md).
 
@@ -40,7 +40,7 @@ OnePosture uses your webcam locally to analyze posture and delivers reminders th
 *   **📹 Real-time Posture Analysis**: Webcam-based real-time posture monitoring and AI-powered analysis
 *   **🦴 Head Position & Shoulder Drift**: Uses calibrated, multi-frame signals and labels front-view depth limits honestly
 *   **🔔 Reliable Reminders**: Native notifications, a top floating reminder, optional sound, and a screen-dimming adapter
-*   **📊 Posture Score**: Displays current posture status scored from 0-100 points
+*   **📊 Continuous Posture Score**: After a five-frame upright calibration, measures the degree of head and shoulder drift instead of showing a misleading default score or jumping between a few fixed values
 *   **📈 Statistics Dashboard**: View posture improvement progress and session records
 *   **⚙️ Personalized Settings**: Customizable notification intervals, sensitivity, and analysis frequency
 

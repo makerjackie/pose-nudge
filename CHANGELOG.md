@@ -7,6 +7,22 @@ All notable changes to **OnePosture** will be documented in this file. The origi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-07-20
+
+### Changed
+
+- Replaced the previous brand mark with a new ImageGen-directed seated-to-upright ribbon icon and regenerated every platform icon size.
+- Rebuilt the desktop interface around a native-style sidebar, compact information hierarchy, and a confidence-first live posture workbench.
+- Replaced binary 100/70/80 scoring with smoothed continuous head and shoulder deviation scoring.
+
+### Fixed
+
+- The live preview now displays the exact uncropped 16:9 frame analyzed by the backend instead of a second camera stream with potentially different zoom.
+- Front-facing users with one low-confidence ear landmark are no longer misclassified as side-facing.
+- Upper-body framing now uses a core-landmark confidence score, and uncalibrated or unreliable frames no longer display a misleading 100-point score.
+- Missing or low-confidence poses clear stale detection history and can no longer continue a reminder timer.
+- Calibration during monitoring now collects five independent backend frames instead of accepting one stale sample.
+
 ## [2.1.1] - 2026-07-20
 
 ### Changed

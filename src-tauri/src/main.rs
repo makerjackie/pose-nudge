@@ -202,8 +202,10 @@ fn ensure_continuous_camera_stream(state: &AppState) -> bool {
     }
 
     let index = *lock_or_recover(&state.selected_camera_index);
+    // Prefer the camera's full field-of-view resolution. Highest-frame-rate modes on
+    // built-in Mac cameras can select a lower-resolution, visibly tighter crop.
     let requested =
-        RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate);
+        RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestResolution);
 
     match Camera::new(CameraIndex::Index(index), requested) {
         Ok(mut cam) => match cam.open_stream() {
@@ -265,6 +267,10 @@ async fn initialize_pose_model(
     state: State<'_, AppState>,
     handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    if state.pose_analyzer.is_model_initialized() {
+        info!("Pose model is already initialized");
+        return Ok(());
+    }
     info!("Initializing pose model");
     state
         .pose_analyzer
@@ -301,14 +307,27 @@ async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<
 }
 
 fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Result<String, String> {
+    const PREVIEW_MAX_WIDTH: u32 = 1280;
+    let preview = if image.width() > PREVIEW_MAX_WIDTH {
+        let (_, preview_height) =
+            fit_preview_dimensions(image.width(), image.height(), PREVIEW_MAX_WIDTH);
+        image::imageops::resize(
+            image,
+            PREVIEW_MAX_WIDTH,
+            preview_height,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        image.clone()
+    };
     let mut jpeg_bytes: Vec<u8> = Vec::new();
     let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 70);
 
     encoder
         .encode(
-            image.as_raw(),
-            image.width(),
-            image.height(),
+            preview.as_raw(),
+            preview.width(),
+            preview.height(),
             image::ColorType::Rgb8.into(),
         )
         .map_err(|e| format!("Failed to encode preview frame as JPEG: {}", e))?;
@@ -317,6 +336,14 @@ fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Resul
         "data:image/jpeg;base64,{}",
         STANDARD.encode(jpeg_bytes)
     ))
+}
+
+fn fit_preview_dimensions(width: u32, height: u32, max_width: u32) -> (u32, u32) {
+    if width <= max_width || width == 0 {
+        return (width, height);
+    }
+    let fitted_height = ((height as f64 * max_width as f64 / width as f64).round() as u32).max(1);
+    (max_width, fitted_height)
 }
 
 #[tauri::command]
@@ -769,6 +796,7 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                 selected_index
             );
             let requested_types = [
+                RequestedFormatType::AbsoluteHighestResolution,
                 RequestedFormatType::HighestFrameRate(15),
                 RequestedFormatType::HighestFrameRate(10),
                 RequestedFormatType::AbsoluteHighestFrameRate,
@@ -902,6 +930,14 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 .get("shoulder_misalignment")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
+                            let stable_turtle = result_json
+                                .get("stable_turtle_neck")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(is_turtle);
+                            let stable_shoulder = result_json
+                                .get("stable_shoulder_misalignment")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(is_shoulder);
                             let reliable = result_json
                                 .get("reliable")
                                 .and_then(|v| v.as_bool())
@@ -911,7 +947,7 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                             let preferences = lock_or_recover(&state.reminder_preferences).clone();
                             let signal = if !reliable {
                                 PostureSignal::Unreliable
-                            } else if is_turtle || is_shoulder {
+                            } else if stable_turtle || stable_shoulder {
                                 PostureSignal::Bad
                             } else {
                                 PostureSignal::Good
@@ -973,9 +1009,9 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
 
                             if decision.should_remind {
                                 let lang = lock_or_recover(&state.current_language).clone();
-                                let message_key = if is_turtle && is_shoulder {
+                                let message_key = if stable_turtle && stable_shoulder {
                                     "alert_both"
-                                } else if is_turtle {
+                                } else if stable_turtle {
                                     "alert_turtle"
                                 } else {
                                     "alert_shoulder"
@@ -1236,5 +1272,16 @@ pub fn run() {
 
     if let Err(error) = run_result {
         error!("Failed to run Tauri application: {}", error);
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::fit_preview_dimensions;
+
+    #[test]
+    fn preview_resize_preserves_widescreen_aspect_ratio() {
+        assert_eq!(fit_preview_dimensions(1920, 1080, 1280), (1280, 720));
+        assert_eq!(fit_preview_dimensions(640, 480, 1280), (640, 480));
     }
 }

@@ -76,7 +76,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="command-bar">
+      <aside className="app-sidebar">
         <button className="brand-lockup" type="button" onClick={() => setActiveView('dashboard')}>
           <span className="brand-mark"><img src="/logo.png" alt="" /></span>
           <span>
@@ -103,8 +103,9 @@ function App() {
           })}
         </nav>
 
-        <div className="command-actions">
-          <span className="privacy-chip"><ShieldCheck aria-hidden="true" />{t('shell.localOnly', 'On-device')}</span>
+        <div className="sidebar-status">
+          <div className="privacy-chip"><ShieldCheck aria-hidden="true" /><span><strong>{t('shell.localOnly', 'On-device')}</strong><small>{t('shell.privateProcessing', 'Video never leaves this Mac')}</small></span></div>
+          <p className={isMonitoring ? 'is-live' : ''}><i />{isMonitoring ? t('dashboard.live', 'Monitoring now') : t('dashboard.paused', 'Monitoring paused')}</p>
           <button
             type="button"
             className={`monitoring-command ${isMonitoring ? 'is-live' : ''}`}
@@ -115,7 +116,7 @@ function App() {
             <span>{isMonitoring ? t('shell.pauseMonitoring', 'Pause') : t('shell.startMonitoring', 'Start')}</span>
           </button>
         </div>
-      </header>
+      </aside>
 
       <main className="workspace" id="main-content">
         <Suspense fallback={<div className="view-loading" role="status">{t('shell.loading', 'Loading…')}</div>}>
