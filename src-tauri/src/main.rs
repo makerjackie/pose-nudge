@@ -47,7 +47,9 @@ async fn activate_license(
     app: AppHandle,
     license_key: String,
 ) -> Result<licensing::LicenseStatus, String> {
-    licensing::activate(&app, &license_key).await
+    let status = licensing::activate(&app, &license_key).await?;
+    let _ = app.emit("license-status-changed", &status);
+    Ok(status)
 }
 
 pub struct Translations {
@@ -288,6 +290,10 @@ async fn initialize_pose_model(
 
 #[tauri::command]
 async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if !licensing::get_license_status(&app).can_use_app {
+        let _ = app.emit("license-access-required", &serde_json::json!({}));
+        return Err("TRIAL_EXPIRED".to_string());
+    }
     *lock_or_recover(&state.monitoring_active) = true;
     *lock_or_recover(&state.force_capture_now) = true;
     if *lock_or_recover(&state.backend_preview_active) {
@@ -391,6 +397,10 @@ async fn calibrate_user_posture(
     image_data_samples: Vec<String>,
     reference_image_data: String,
 ) -> Result<String, String> {
+    if !licensing::get_license_status(&handle).can_use_app {
+        let _ = handle.emit("license-access-required", &serde_json::json!({}));
+        return Err("TRIAL_EXPIRED".to_string());
+    }
     {
         let mut calibration_commit_in_progress =
             lock_or_recover(&state.calibration_commit_in_progress);
@@ -435,7 +445,7 @@ fn set_reminder_preferences(
 ) -> ReminderPreferences {
     let mut normalized = preferences.normalized();
     let license = licensing::get_license_status(&app);
-    if license.commercial_ready && !license.active {
+    if license.commercial_ready && !license.can_use_app {
         normalized.screen_dim = false;
     }
     *lock_or_recover(&state.reminder_preferences) = normalized.clone();
@@ -601,6 +611,10 @@ fn deliver_reminder(
 
 #[tauri::command]
 fn send_test_reminder(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if !licensing::get_license_status(&app).can_use_app {
+        let _ = app.emit("license-access-required", &serde_json::json!({}));
+        return Err("TRIAL_EXPIRED".to_string());
+    }
     let preferences = lock_or_recover(&state.reminder_preferences).clone();
     let lang = lock_or_recover(&state.current_language).clone();
     let message = state.translations.get(&lang, "alert_both");
@@ -794,12 +808,34 @@ async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
     let mut last_analysis_time = Instant::now() - Duration::from_secs(3);
     let mut last_preview_time = Instant::now() - Duration::from_millis(100);
+    let mut last_license_check = Instant::now() - Duration::from_secs(30);
 
     loop {
         sleep(Duration::from_millis(50)).await;
 
         if !*lock_or_recover(&state.monitoring_active) {
             continue;
+        }
+
+        if last_license_check.elapsed() >= Duration::from_secs(30) {
+            last_license_check = Instant::now();
+            if !licensing::get_license_status(&app_handle).can_use_app {
+                *lock_or_recover(&state.monitoring_active) = false;
+                *lock_or_recover(&state.force_capture_now) = false;
+                *lock_or_recover(&state.force_preview_now) = false;
+                lock_or_recover(&state.reminder_engine).reset();
+                stop_and_release_camera(&state, "trial expired");
+                if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
+                    set_tray_icon(&app_handle, tray, "monitoring_off.png");
+                }
+                update_tray_status(&state, TrayStatus::Paused);
+                let _ = app_handle.emit(
+                    "monitoring-state-changed",
+                    &serde_json::json!({ "active": false }),
+                );
+                let _ = app_handle.emit("license-access-required", &serde_json::json!({}));
+                continue;
+            }
         }
 
         let configured_interval = {
@@ -1336,6 +1372,15 @@ pub fn run() {
                         },
                         "start_monitoring" => {
                             info!("'Start Monitoring' clicked");
+                            if !licensing::get_license_status(app).can_use_app {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.unminimize();
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                                let _ = app.emit("license-access-required", &serde_json::json!({}));
+                                return;
+                            }
                             *lock_or_recover(&state.monitoring_active) = true;
                             *lock_or_recover(&state.force_capture_now) = true;
                             if *lock_or_recover(&state.backend_preview_active) {
@@ -1367,6 +1412,15 @@ pub fn run() {
                             let _ = app.emit("monitoring-state-changed", &serde_json::json!({ "active": false }));
                         }
                         "test_reminder" => {
+                            if !licensing::get_license_status(app).can_use_app {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.unminimize();
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                                let _ = app.emit("license-access-required", &serde_json::json!({}));
+                                return;
+                            }
                             let preferences = lock_or_recover(&state.reminder_preferences).clone();
                             let lang = lock_or_recover(&state.current_language).clone();
                             let message = state.translations.get(&lang, "alert_both");

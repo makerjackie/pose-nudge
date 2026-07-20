@@ -112,12 +112,15 @@
 .primary-navigation button svg { width: 17px; height: 17px; }
 .primary-navigation button:hover { color: var(--foreground); background: var(--muted); }
 .primary-navigation button.is-active { color: var(--foreground); background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+.primary-navigation button:disabled { opacity: .42; cursor: not-allowed; background: transparent; box-shadow: none; }
 .sidebar-status { margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
 .privacy-chip { display: flex; align-items: flex-start; gap: 9px; color: var(--muted-foreground); }
 .privacy-chip > svg { width: 15px; height: 15px; margin-top: 1px; color: #3e7457; }
 .privacy-chip strong, .privacy-chip small { display: block; }
 .privacy-chip strong { color: var(--foreground); font-size: 13px; }
 .privacy-chip small { margin-top: 2px; font-size: 12px; line-height: 1.4; }
+.trial-status-chip { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 12px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--brand) 34%, var(--border)); border-radius: 9px; color: var(--foreground); background: var(--brand-soft); font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
+.trial-status-chip svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--brand); }
 .sidebar-status > p { display: flex; align-items: center; gap: 7px; margin: 15px 3px 10px; color: var(--muted-foreground); font-size: 12px; }
 .sidebar-status > p i, .status-dot i { width: 7px; height: 7px; border-radius: 50%; background: #9ca1aa; }
 .sidebar-status > p.is-live i, .status-dot.is-live i { background: #3b8a62; box-shadow: 0 0 0 4px rgba(59,138,98,.1); }
@@ -317,6 +320,10 @@
 .settings-license-accent { height: 4px; background: var(--brand); }
 .settings-license-input { width: 100%; height: 35px; padding: 0 10px 0 36px; border: 1px solid var(--input); border-radius: 8px; color: var(--foreground); background: var(--background); font-size: 12px; outline: none; }
 .settings-license-input:focus { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 18%, transparent); }
+.settings-trial-expired { display: flex; align-items: flex-start; gap: 11px; padding: 15px; border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); border-radius: 11px; color: var(--foreground); background: var(--brand-soft); }
+.settings-trial-expired > svg { flex: 0 0 auto; color: var(--brand); }
+.settings-trial-expired strong { display: block; font-size: 14px; }
+.settings-trial-expired p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 
 /* About */
 .about-page > .page-heading { display: block; }
@@ -353,7 +360,7 @@
   .app-shell { grid-template-columns: 72px minmax(0, 1fr); }
   .app-sidebar { padding-inline: 10px; }
   .brand-lockup { justify-content: center; padding-inline: 0; }
-  .brand-lockup > span:last-child, .primary-navigation button span, .privacy-chip span, .sidebar-status > p, .monitoring-command span { display: none; }
+  .brand-lockup > span:last-child, .primary-navigation button span, .privacy-chip span, .trial-status-chip span, .sidebar-status > p, .monitoring-command span { display: none; }
   .primary-navigation button, .monitoring-command { justify-content: center; padding: 0; }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .monitoring-layout { grid-template-columns: 1fr; }

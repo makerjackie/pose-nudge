@@ -7,6 +7,19 @@ All notable changes to **OnePosture** will be documented in this file. The origi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-20
+
+### Added
+
+- Added a seven-day, no-account full-feature trial that starts on first launch and works offline.
+- Added a visible trial countdown and a focused, localized lifetime-upgrade screen when the trial ends.
+
+### Changed
+
+- OnePosture Pro now unlocks continued use of the complete application after the trial, rather than gating only the screen-dimming reminder.
+- Monitoring, calibration, test reminders, and menu-bar actions now enforce the same trial or Pro entitlement boundary.
+- Trial clock rollback is clamped to the last observed time without adding invasive anti-tamper behavior.
+
 ## [2.2.3] - 2026-07-20
 
 ### Changed

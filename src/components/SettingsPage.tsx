@@ -34,20 +34,17 @@ import {
     type AppLanguage,
 } from '@/lib/preferences';
 import { requestReminderPermission } from '@/lib/monitoring';
+import {
+    activateLicense,
+    announceLicenseStatus,
+    getLicenseStatus,
+    type LicenseStatus,
+} from '@/lib/licensing';
 
 // --- Type Definitions ---
 interface CameraDetail {
     index: number;
     name: string;
-}
-
-interface LicenseStatus {
-    edition: 'free' | 'pro';
-    active: boolean;
-    commercial_ready: boolean;
-    license_id?: string;
-    expires_at?: number;
-    message?: string;
 }
 
 const LanguageSettings = () => {
@@ -533,8 +530,8 @@ const NotificationSettings = () => {
 
     useEffect(() => {
         void refreshPermission();
-        invoke<LicenseStatus>('get_license_status')
-            .then((status) => setProEnabled(status.active || !status.commercial_ready))
+        getLicenseStatus()
+            .then((status) => setProEnabled(status.can_use_app || !status.commercial_ready))
             .catch(console.error);
     }, [refreshPermission]);
 
@@ -699,7 +696,7 @@ const LicenseSettings = () => {
     };
 
     useEffect(() => {
-        invoke<LicenseStatus>('get_license_status')
+        getLicenseStatus()
             .then(setStatus)
             .catch((error) => setActivationStatus(String(error)));
     }, []);
@@ -709,8 +706,9 @@ const LicenseSettings = () => {
         setActivating(true);
         setActivationStatus('');
         try {
-            const nextStatus = await invoke<LicenseStatus>('activate_license', { licenseKey });
+            const nextStatus = await activateLicense(licenseKey);
             setStatus(nextStatus);
+            announceLicenseStatus(nextStatus);
             setLicenseKey('');
             setActivationStatus(t('settings.activationSuccess', 'OnePosture Pro 已激活，可离线使用。'));
         } catch (error) {
@@ -741,8 +739,23 @@ const LicenseSettings = () => {
                 </div>
             </header>
             <div className="settings-card-content space-y-4">
+                {status?.trial_active && (
+                    <p className="flex items-center gap-2 rounded-xl bg-amber-50 p-4 text-sm font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-100">
+                        <Sparkles className="h-5 w-5" />
+                        {t('settings.trialActive', { count: status.trial_days_remaining })}
+                    </p>
+                )}
+                {status?.commercial_ready && !status.can_use_app && (
+                    <div className="settings-trial-expired" role="status">
+                        <BadgeCheck className="h-6 w-6" />
+                        <div>
+                            <strong>{t('settings.trialExpiredTitle', '7 天完整试用已结束')}</strong>
+                            <p>{t('settings.trialExpiredDesc', '解锁 OnePosture Pro，继续使用姿势监控、可靠提醒和全部功能。')}</p>
+                        </div>
+                    </div>
+                )}
                 <div className="grid gap-2 text-sm sm:grid-cols-3">
-                    <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureDim', '屏幕柔和变暗')}</p>
+                    <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureFull', '持续使用全部功能')}</p>
                     <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureOffline', '激活后永久离线使用')}</p>
                     <p className="rounded-lg bg-muted/50 px-3 py-2">{t('settings.proFeatureDevices', '最多 3 台设备')}</p>
                 </div>
@@ -789,9 +802,14 @@ const LicenseSettings = () => {
 
 type SettingsSection = 'reminders' | 'detection' | 'general' | 'pro';
 
-const SettingsPage = () => {
+interface SettingsPageProps {
+    initialSection?: SettingsSection;
+    accessLocked?: boolean;
+}
+
+const SettingsPage = ({ initialSection, accessLocked = false }: SettingsPageProps) => {
     const { t } = useTranslation();
-    const [section, setSection] = useState<SettingsSection>('reminders');
+    const [section, setSection] = useState<SettingsSection>(initialSection ?? 'reminders');
     const sections: Array<{
         id: SettingsSection;
         icon: typeof BellRing;
@@ -803,7 +821,15 @@ const SettingsPage = () => {
         { id: 'general', icon: Settings2, label: t('settings.tabGeneral', 'General'), description: t('settings.tabGeneralDesc', 'Language, theme and updates') },
         { id: 'pro', icon: BadgeCheck, label: 'OnePosture Pro', description: t('settings.tabProDesc', 'License and paid reminder tools') },
     ];
-    const activeSection = sections.find((item) => item.id === section) ?? sections[0];
+    const visibleSections = accessLocked
+        ? sections.filter((item) => item.id === 'pro' || item.id === 'general')
+        : sections;
+    const effectiveSection = visibleSections.some((item) => item.id === section) ? section : 'pro';
+    const activeSection = visibleSections.find((item) => item.id === effectiveSection) ?? visibleSections[0];
+
+    useEffect(() => {
+        if (accessLocked) setSection('pro');
+    }, [accessLocked]);
 
     return (
         <section className="page-stack settings-page">
@@ -817,10 +843,10 @@ const SettingsPage = () => {
 
             <div className="settings-shell">
                 <nav className="settings-index" aria-label={t('settings.settingsNavigation', 'Settings sections')}>
-                    {sections.map((item) => {
+                    {visibleSections.map((item) => {
                         const Icon = item.icon;
                         return (
-                            <button key={item.id} type="button" className={section === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
+                            <button key={item.id} type="button" className={effectiveSection === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
                                 <Icon />
                                 <span><strong>{item.label}</strong><small>{item.description}</small></span>
                             </button>
@@ -835,10 +861,10 @@ const SettingsPage = () => {
                         <p>{activeSection.description}</p>
                     </header>
                     <div className="settings-panels">
-                        {section === 'reminders' && <NotificationSettings />}
-                        {section === 'detection' && <><DetectionSettings /><CameraSettings /></>}
-                        {section === 'general' && <><LanguageSettings /><ThemeSettings /><UpdateSettings /></>}
-                        {section === 'pro' && <LicenseSettings />}
+                        {effectiveSection === 'reminders' && <NotificationSettings />}
+                        {effectiveSection === 'detection' && <><DetectionSettings /><CameraSettings /></>}
+                        {effectiveSection === 'general' && <><LanguageSettings /><ThemeSettings /><UpdateSettings /></>}
+                        {effectiveSection === 'pro' && <LicenseSettings />}
                     </div>
                 </div>
             </div>

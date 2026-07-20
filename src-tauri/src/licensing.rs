@@ -2,11 +2,16 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::ErrorKind;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 const PRODUCT_ID: &str = "oneposture-pro";
 const DEFAULT_LICENSE_API_URL: &str = "https://01mvp.com/api";
 const DEFAULT_LICENSE_PUBLIC_KEY: &str = "3ikazOS9SDxt25wT17gpx9cgfOwmF3O9WP_2zp7au8Y";
+pub const TRIAL_DURATION_DAYS: i64 = 7;
+const TRIAL_DURATION_SECONDS: i64 = TRIAL_DURATION_DAYS * 24 * 60 * 60;
+static TRIAL_STATE_LOCK: Mutex<()> = Mutex::new(());
 
 fn license_api_url() -> &'static str {
     option_env!("ONEPOSTURE_LICENSE_API_URL").unwrap_or(DEFAULT_LICENSE_API_URL)
@@ -33,22 +38,55 @@ pub struct LicenseStatus {
     pub edition: String,
     pub active: bool,
     pub commercial_ready: bool,
+    pub can_use_app: bool,
+    pub trial_active: bool,
+    pub trial_started_at: Option<i64>,
+    pub trial_ends_at: Option<i64>,
+    pub trial_days_remaining: u32,
     pub license_id: Option<String>,
     pub expires_at: Option<i64>,
     pub message: Option<String>,
 }
 
 impl LicenseStatus {
-    fn free(commercial_ready: bool, message: Option<String>) -> Self {
+    fn developer() -> Self {
         Self {
             edition: "free".to_string(),
             active: false,
-            commercial_ready,
+            commercial_ready: false,
+            can_use_app: true,
+            trial_active: false,
+            trial_started_at: None,
+            trial_ends_at: None,
+            trial_days_remaining: 0,
+            license_id: None,
+            expires_at: None,
+            message: None,
+        }
+    }
+
+    fn locked(message: Option<String>) -> Self {
+        Self {
+            edition: "free".to_string(),
+            active: false,
+            commercial_ready: true,
+            can_use_app: false,
+            trial_active: false,
+            trial_started_at: None,
+            trial_ends_at: None,
+            trial_days_remaining: 0,
             license_id: None,
             expires_at: None,
             message,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct TrialState {
+    version: u8,
+    started_at: i64,
+    last_seen_at: i64,
 }
 
 #[derive(Serialize)]
@@ -80,6 +118,13 @@ fn device_id_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .app_data_dir()
         .map(|path| path.join("license").join("device-id"))
         .map_err(|error| format!("Failed to resolve license directory: {}", error))
+}
+
+fn trial_state_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|path| path.join("license").join("trial.json"))
+        .map_err(|error| format!("Failed to resolve trial directory: {}", error))
 }
 
 fn get_or_create_device_id(app: &AppHandle) -> Result<String, String> {
@@ -156,25 +201,118 @@ fn status_from_token(token: &str, public_key: &str, device_id: &str) -> LicenseS
             edition: claims.edition,
             active: true,
             commercial_ready: true,
+            can_use_app: true,
+            trial_active: false,
+            trial_started_at: None,
+            trial_ends_at: None,
+            trial_days_remaining: 0,
             license_id: Some(claims.license_id),
             expires_at: claims.expires_at,
             message: None,
         },
-        Err(error) => LicenseStatus::free(true, Some(error)),
+        Err(error) => LicenseStatus::locked(Some(error)),
     }
 }
 
+fn status_from_trial_state(
+    state: &mut TrialState,
+    now: i64,
+    message: Option<String>,
+) -> LicenseStatus {
+    if state.version != 1 || state.started_at <= 0 {
+        return LicenseStatus::locked(Some("Trial record is invalid".to_string()));
+    }
+
+    // Do not extend the trial when the system clock moves backwards. This is a
+    // deliberately light boundary: deleting application data can still reset it.
+    let effective_now = now.max(state.started_at).max(state.last_seen_at);
+    state.last_seen_at = effective_now;
+    let trial_ends_at = state.started_at.saturating_add(TRIAL_DURATION_SECONDS);
+    let remaining_seconds = trial_ends_at.saturating_sub(effective_now);
+    let trial_active = remaining_seconds > 0;
+    let trial_days_remaining = if trial_active {
+        ((remaining_seconds + 86_399) / 86_400) as u32
+    } else {
+        0
+    };
+
+    LicenseStatus {
+        edition: if trial_active { "trial" } else { "free" }.to_string(),
+        active: false,
+        commercial_ready: true,
+        can_use_app: trial_active,
+        trial_active,
+        trial_started_at: Some(state.started_at),
+        trial_ends_at: Some(trial_ends_at),
+        trial_days_remaining,
+        license_id: None,
+        expires_at: None,
+        message,
+    }
+}
+
+fn get_trial_status(app: &AppHandle, message: Option<String>) -> LicenseStatus {
+    let _guard = TRIAL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let now = chrono::Utc::now().timestamp();
+    let Ok(path) = trial_state_path(app) else {
+        return LicenseStatus::locked(Some("Trial storage is unavailable".to_string()));
+    };
+    let mut state = match fs::read_to_string(&path) {
+        Ok(value) => match serde_json::from_str::<TrialState>(&value) {
+            Ok(state) => state,
+            Err(_) => return LicenseStatus::locked(Some("Trial record is invalid".to_string())),
+        },
+        Err(error) if error.kind() == ErrorKind::NotFound => TrialState {
+            version: 1,
+            started_at: now,
+            last_seen_at: now,
+        },
+        Err(error) => {
+            return LicenseStatus::locked(Some(format!("Failed to read trial record: {}", error)))
+        }
+    };
+    let status = status_from_trial_state(&mut state, now, message);
+
+    if let Some(parent) = path.parent() {
+        if let Err(error) = fs::create_dir_all(parent) {
+            return LicenseStatus::locked(Some(format!(
+                "Failed to create trial directory: {}",
+                error
+            )));
+        }
+    }
+    if let Err(error) = serde_json::to_vec_pretty(&state)
+        .map_err(|error| error.to_string())
+        .and_then(|value| fs::write(&path, value).map_err(|error| error.to_string()))
+    {
+        return LicenseStatus::locked(Some(format!("Failed to save trial record: {}", error)));
+    }
+    status
+}
+
 pub fn get_license_status(app: &AppHandle) -> LicenseStatus {
+    if cfg!(debug_assertions) && option_env!("ONEPOSTURE_ENFORCE_TRIAL_IN_DEBUG") != Some("1") {
+        return LicenseStatus::developer();
+    }
     let public_key = license_public_key();
     let Ok(path) = entitlement_path(app) else {
-        return LicenseStatus::free(true, Some("License storage is unavailable".to_string()));
+        return LicenseStatus::locked(Some("License storage is unavailable".to_string()));
     };
     match fs::read_to_string(path) {
         Ok(token) => match get_or_create_device_id(app) {
-            Ok(device_id) => status_from_token(&token, public_key, &device_id),
-            Err(error) => LicenseStatus::free(true, Some(error)),
+            Ok(device_id) => {
+                let status = status_from_token(&token, public_key, &device_id);
+                if status.active {
+                    status
+                } else {
+                    get_trial_status(app, status.message)
+                }
+            }
+            Err(error) => get_trial_status(app, Some(error)),
         },
-        Err(_) => LicenseStatus::free(true, None),
+        Err(_) => get_trial_status(app, None),
     }
 }
 
@@ -307,5 +445,45 @@ mod tests {
             verify_entitlement_with_key(&token, &signing_key.verifying_key(), 200, "device-2",)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn grants_a_complete_seven_day_trial() {
+        let mut state = TrialState {
+            version: 1,
+            started_at: 1_000_000,
+            last_seen_at: 1_000_000,
+        };
+        let status = status_from_trial_state(&mut state, 1_000_000, None);
+        assert!(status.can_use_app);
+        assert!(status.trial_active);
+        assert_eq!(status.edition, "trial");
+        assert_eq!(status.trial_days_remaining, 7);
+        assert_eq!(status.trial_ends_at, Some(1_604_800));
+    }
+
+    #[test]
+    fn locks_access_when_the_trial_expires() {
+        let mut state = TrialState {
+            version: 1,
+            started_at: 1_000_000,
+            last_seen_at: 1_000_000,
+        };
+        let status = status_from_trial_state(&mut state, 1_604_800, None);
+        assert!(!status.can_use_app);
+        assert!(!status.trial_active);
+        assert_eq!(status.trial_days_remaining, 0);
+    }
+
+    #[test]
+    fn moving_the_clock_back_does_not_restore_trial_time() {
+        let mut state = TrialState {
+            version: 1,
+            started_at: 1_000_000,
+            last_seen_at: 1_500_000,
+        };
+        let status = status_from_trial_state(&mut state, 1_100_000, None);
+        assert_eq!(state.last_seen_at, 1_500_000);
+        assert_eq!(status.trial_days_remaining, 2);
     }
 }
