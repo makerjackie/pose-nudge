@@ -74,6 +74,7 @@
     "tabRemindersDesc": "選擇姿勢提醒如何觸達你",
     "tabDetection": "偵測設定",
     "tabDetectionDesc": "攝影機、靈敏度與偵測間隔",
+    "monitoringIntervalDesc": "控制背景分析頻率與耗電量。關閉省電模式時，開啟即時監控頁面會約每秒更新一次結果。",
     "tabGeneral": "一般設定",
     "tabGeneralDesc": "語言、主題與更新",
     "tabProDesc": "啟用碼與付費提醒功能",
@@ -152,7 +153,12 @@
     "lowConfidenceDesc": "請讓頭部和雙肩完整出現在畫面中；本幀不會計分，也不會觸發提醒。",
     "calibrationInsufficientFrames": "清晰的基準畫面不足（{{detected}}/{{minimum}}）。請正對攝影機後重試。",
     "calibrationNoSamples": "沒有拍到基準畫面。請檢查攝影機權限後重試。",
-    "calibrationNoKeypoints": "未偵測到可用的姿勢關鍵點。請確保頭部和雙肩都清晰可見。"
+    "calibrationNoKeypoints": "未偵測到可用的姿勢關鍵點。請確保頭部和雙肩都清晰可見。",
+    "calibrationFrameTimeout": "攝影機沒有及時傳回新畫面，請檢查攝影機權限後重試。",
+    "calibrationInvalidReference": "無法讀取剛才拍攝的基準影像，請重試。",
+    "calibrationInProgress": "正在擷取姿態基準，請稍候。",
+    "calibrationSampling": "正在擷取基準 {{current}}/{{total}}…",
+    "calibrationApplied": "姿態基準已儲存，即時結果正在更新。"
   },
   "reminder": {
     "testLabel": "OnePosture · 測試提醒",

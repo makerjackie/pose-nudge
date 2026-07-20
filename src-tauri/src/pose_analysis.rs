@@ -10,7 +10,10 @@ use ort::{
     value::Value,
 };
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{path::BaseDirectory, AppHandle, Manager};
 
@@ -48,6 +51,15 @@ struct PostureMetrics {
     /// 1.0 is the configured threshold; values below it are still useful for a continuous score.
     shoulder_deviation: f32,
     baseline_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BaselineSnapshot {
+    face_shoulder_ratio: Option<f32>,
+    shoulder_alignment: Option<f32>,
+    head_forward_ratio: Option<f32>,
+    #[serde(default)]
+    head_height_ratio: Option<f32>,
 }
 
 pub struct PoseAnalyzer {
@@ -327,14 +339,14 @@ impl PoseAnalyzer {
         &self,
         image: &ImageBuffer<Rgb<u8>, Vec<u8>>,
     ) -> Result<PoseKeypoints, Box<dyn std::error::Error + Send + Sync>> {
-        info!("Starting keypoint extraction");
+        debug!("Starting keypoint extraction");
         let (input_tensor, transform) = self.preprocess_image(image)?;
         let mut session_guard = self.session.lock();
         let session = session_guard
             .as_mut()
             .ok_or("The YOLO pose model is not initialized")?;
         let outputs = session.run(ort::inputs!["images" => input_tensor])?;
-        info!("Model inference succeeded");
+        debug!("Model inference succeeded");
         self.postprocess_output(&outputs, image.width(), image.height(), transform)
     }
 
@@ -342,7 +354,7 @@ impl PoseAnalyzer {
         &self,
         image: &ImageBuffer<Rgb<u8>, Vec<u8>>,
     ) -> Result<(Value, LetterboxTransform), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Starting image preprocessing");
+        debug!("Starting image preprocessing");
         let scale = (MODEL_SIZE as f32 / image.width() as f32)
             .min(MODEL_SIZE as f32 / image.height() as f32);
         let resized_width = (image.width() as f32 * scale).round() as u32;
@@ -386,17 +398,17 @@ impl PoseAnalyzer {
         orig_height: u32,
         transform: LetterboxTransform,
     ) -> Result<PoseKeypoints, Box<dyn std::error::Error + Send + Sync>> {
-        info!("Starting output postprocessing");
+        debug!("Starting output postprocessing");
         let output = outputs
             .get("output0")
             .ok_or("The pose model output is missing")?;
         let (shape, data) = output.try_extract_tensor::<f32>()?;
-        info!("Model output shape: {:?}", shape);
+        debug!("Model output shape: {:?}", shape);
         if shape.len() != 3 || shape[1] != 56 {
             return Err("The pose model returned an unexpected output shape".into());
         }
         let detections = shape[2] as usize;
-        info!("Detection count: {}", detections);
+        debug!("Detection count: {}", detections);
         let mut best_detection = None;
         let mut best_quality = 0.0f32;
         for i in 0..detections {
@@ -419,7 +431,7 @@ impl PoseAnalyzer {
             }
         }
         let detection_idx = best_detection.ok_or("No reliable pose detection was found")?;
-        info!(
+        debug!(
             "Selected best detection: {}, combined quality: {:.2}",
             detection_idx, best_quality
         );
@@ -661,11 +673,45 @@ impl PoseAnalyzer {
         Some((shoulder_y - keypoints.nose.y).abs() / shoulder_width)
     }
 
-    pub fn set_baseline_postures(
+    pub fn calibrate_and_save_reference(
         &self,
         samples: &[String],
+        reference_image: &str,
         handle: &AppHandle,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+        let baseline = self.calculate_baseline(samples)?;
+        let reference_bytes = decode_image_payload(reference_image)?;
+        image::load_from_memory(&reference_bytes)
+            .map_err(|error| format!("CALIBRATION_INVALID_REFERENCE:{error}"))?;
+
+        let app_data_path = handle
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("Failed to resolve the app data directory: {error}"))?;
+        let baseline_path = app_data_path.join("baseline.json");
+        let reference_dir = app_data_path.join("calibration_images");
+        let reference_path = reference_dir.join("calibrated_pose.jpeg");
+        fs::create_dir_all(&reference_dir)?;
+
+        let baseline_bytes = serde_json::to_vec_pretty(&baseline)?;
+        commit_calibration_files(
+            &baseline_path,
+            &baseline_bytes,
+            &reference_path,
+            &reference_bytes,
+        )?;
+        self.apply_baseline(&baseline);
+        info!(
+            "Calibration baseline and reference committed: {:?}",
+            app_data_path
+        );
+        Ok(reference_path)
+    }
+
+    fn calculate_baseline(
+        &self,
+        samples: &[String],
+    ) -> Result<BaselineSnapshot, Box<dyn std::error::Error + Send + Sync>> {
         if samples.is_empty() {
             return Err("CALIBRATION_NO_SAMPLES".into());
         }
@@ -676,11 +722,23 @@ impl PoseAnalyzer {
         let mut head_height_ratios = Vec::new();
         let mut valid_frames = 0usize;
 
-        for sample in samples {
-            let image_data = self.decode_base64_image(sample)?;
-            let keypoints = self.extract_pose_keypoints(&image_data)?;
+        for (index, sample) in samples.iter().enumerate() {
+            let image_data = match self.decode_base64_image(sample) {
+                Ok(image) => image,
+                Err(error) => {
+                    warn!("Skipping unreadable calibration frame {index}: {error}");
+                    continue;
+                }
+            };
+            let keypoints = match self.extract_pose_keypoints(&image_data) {
+                Ok(keypoints) => keypoints,
+                Err(error) => {
+                    warn!("Skipping calibration frame {index} without a usable pose: {error}");
+                    continue;
+                }
+            };
             let confidence = self.calculate_average_confidence(&keypoints);
-            if confidence < 0.55
+            if confidence < 0.48
                 || keypoints.nose.confidence < 0.5
                 || keypoints.left_shoulder.confidence < 0.5
                 || keypoints.right_shoulder.confidence < 0.5
@@ -714,45 +772,30 @@ impl PoseAnalyzer {
             .into());
         }
 
-        *self.baseline_face_shoulder_ratio.lock() = median(face_ratios);
-        *self.baseline_shoulder_alignment.lock() = median(shoulder_alignments);
-        *self.baseline_head_forward_ratio.lock() = median(forward_ratios);
-        *self.baseline_head_height_ratio.lock() = median(head_height_ratios);
-        self.clear_recent_results();
+        let baseline = BaselineSnapshot {
+            face_shoulder_ratio: median(face_ratios),
+            shoulder_alignment: median(shoulder_alignments),
+            head_forward_ratio: median(forward_ratios),
+            head_height_ratio: median(head_height_ratios),
+        };
 
-        if self.baseline_face_shoulder_ratio.lock().is_some()
-            || self.baseline_shoulder_alignment.lock().is_some()
-            || self.baseline_head_forward_ratio.lock().is_some()
-            || self.baseline_head_height_ratio.lock().is_some()
+        if baseline.face_shoulder_ratio.is_some()
+            || baseline.shoulder_alignment.is_some()
+            || baseline.head_forward_ratio.is_some()
+            || baseline.head_height_ratio.is_some()
         {
-            self.save_baseline_to_file(handle)?;
-            Ok(())
+            Ok(baseline)
         } else {
             Err("CALIBRATION_NO_KEYPOINTS".into())
         }
     }
 
-    fn save_baseline_to_file(
-        &self,
-        handle: &AppHandle,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let app_data_path = handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to resolve the app data directory: {}", e))?;
-        let baseline_file = app_data_path.join("baseline.json");
-
-        let baseline_data = serde_json::json!({
-            "face_shoulder_ratio": *self.baseline_face_shoulder_ratio.lock(),
-            "shoulder_alignment": *self.baseline_shoulder_alignment.lock(),
-            "head_forward_ratio": *self.baseline_head_forward_ratio.lock(),
-            "head_height_ratio": *self.baseline_head_height_ratio.lock()
-        });
-
-        let json_str = serde_json::to_string_pretty(&baseline_data)?;
-        std::fs::write(&baseline_file, json_str)?;
-        info!("Baseline saved: {:?}", baseline_file);
-        Ok(())
+    fn apply_baseline(&self, baseline: &BaselineSnapshot) {
+        *self.baseline_face_shoulder_ratio.lock() = baseline.face_shoulder_ratio;
+        *self.baseline_shoulder_alignment.lock() = baseline.shoulder_alignment;
+        *self.baseline_head_forward_ratio.lock() = baseline.head_forward_ratio;
+        *self.baseline_head_height_ratio.lock() = baseline.head_height_ratio;
+        self.clear_recent_results();
     }
 
     pub fn load_baseline_from_file(
@@ -766,33 +809,9 @@ impl PoseAnalyzer {
         let baseline_file = app_data_path.join("baseline.json");
 
         if baseline_file.exists() {
-            let json_str = std::fs::read_to_string(&baseline_file)?;
-            let baseline_data: serde_json::Value = serde_json::from_str(&json_str)?;
-
-            if let Some(ratio) = baseline_data
-                .get("face_shoulder_ratio")
-                .and_then(|v| v.as_f64())
-            {
-                *self.baseline_face_shoulder_ratio.lock() = Some(ratio as f32);
-            }
-            if let Some(alignment) = baseline_data
-                .get("shoulder_alignment")
-                .and_then(|v| v.as_f64())
-            {
-                *self.baseline_shoulder_alignment.lock() = Some(alignment as f32);
-            }
-            if let Some(forward) = baseline_data
-                .get("head_forward_ratio")
-                .and_then(|v| v.as_f64())
-            {
-                *self.baseline_head_forward_ratio.lock() = Some(forward as f32);
-            }
-            if let Some(head_height) = baseline_data
-                .get("head_height_ratio")
-                .and_then(|v| v.as_f64())
-            {
-                *self.baseline_head_height_ratio.lock() = Some(head_height as f32);
-            }
+            let json_str = fs::read_to_string(&baseline_file)?;
+            let baseline: BaselineSnapshot = serde_json::from_str(&json_str)?;
+            self.apply_baseline(&baseline);
             info!("Baseline loaded: {:?}", baseline_file);
         } else {
             info!("Baseline file does not exist: {:?}", baseline_file);
@@ -886,6 +905,64 @@ impl PoseAnalyzer {
     }
 }
 
+fn decode_image_payload(
+    image_data: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let base64_data = image_data
+        .split_once(',')
+        .map(|(_, payload)| payload)
+        .unwrap_or(image_data);
+    Ok(general_purpose::STANDARD.decode(base64_data)?)
+}
+
+fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp_path = path.with_extension(format!(
+        "{}.tmp",
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("data")
+    ));
+    fs::write(&temp_path, bytes)?;
+    #[cfg(target_os = "windows")]
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(&temp_path, path)?;
+    Ok(())
+}
+
+fn restore_file(path: &Path, previous: Option<&[u8]>) -> std::io::Result<()> {
+    if let Some(bytes) = previous {
+        atomic_write(path, bytes)
+    } else if path.exists() {
+        fs::remove_file(path)
+    } else {
+        Ok(())
+    }
+}
+
+fn commit_calibration_files(
+    baseline_path: &Path,
+    baseline_bytes: &[u8],
+    reference_path: &Path,
+    reference_bytes: &[u8],
+) -> std::io::Result<()> {
+    let previous_baseline = fs::read(baseline_path).ok();
+    let previous_reference = fs::read(reference_path).ok();
+
+    atomic_write(reference_path, reference_bytes)?;
+    if let Err(error) = atomic_write(baseline_path, baseline_bytes) {
+        if let Err(restore_error) = restore_file(reference_path, previous_reference.as_deref()) {
+            warn!("Failed to restore calibration reference after commit error: {restore_error}");
+        }
+        if let Err(restore_error) = restore_file(baseline_path, previous_baseline.as_deref()) {
+            warn!("Failed to restore baseline after commit error: {restore_error}");
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn median(mut values: Vec<f32>) -> Option<f32> {
     if values.is_empty() {
         return None;
@@ -902,6 +979,7 @@ fn median(mut values: Vec<f32>) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn keypoints(nose_y: f32, left_shoulder_y: f32, right_shoulder_y: f32) -> PoseKeypoints {
         let visible = |x, y| KeyPoint {
@@ -923,6 +1001,49 @@ mod tests {
     #[test]
     fn median_rejects_single_frame_outliers() {
         assert_eq!(median(vec![0.2, 0.21, 1.8, 0.19, 0.22]), Some(0.21));
+    }
+
+    #[test]
+    fn calibration_commit_replaces_baseline_and_reference_together() {
+        let test_dir = std::env::temp_dir().join(format!("oneposture-test-{}", Uuid::new_v4()));
+        let baseline_path = test_dir.join("baseline.json");
+        let reference_path = test_dir.join("calibration_images/reference.jpeg");
+        fs::create_dir_all(reference_path.parent().unwrap()).unwrap();
+        fs::write(&baseline_path, b"old-baseline").unwrap();
+        fs::write(&reference_path, b"old-reference").unwrap();
+
+        commit_calibration_files(
+            &baseline_path,
+            b"new-baseline",
+            &reference_path,
+            b"new-reference",
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&baseline_path).unwrap(), b"new-baseline");
+        assert_eq!(fs::read(&reference_path).unwrap(), b"new-reference");
+        fs::remove_dir_all(test_dir).unwrap();
+    }
+
+    #[test]
+    fn failed_calibration_commit_restores_the_previous_reference() {
+        let test_dir = std::env::temp_dir().join(format!("oneposture-test-{}", Uuid::new_v4()));
+        let baseline_path = test_dir.join("baseline.json");
+        let reference_path = test_dir.join("calibration_images/reference.jpeg");
+        fs::create_dir_all(&baseline_path).unwrap();
+        fs::create_dir_all(reference_path.parent().unwrap()).unwrap();
+        fs::write(&reference_path, b"old-reference").unwrap();
+
+        assert!(commit_calibration_files(
+            &baseline_path,
+            b"new-baseline",
+            &reference_path,
+            b"new-reference",
+        )
+        .is_err());
+
+        assert_eq!(fs::read(&reference_path).unwrap(), b"old-reference");
+        fs::remove_dir_all(test_dir).unwrap();
     }
 
     #[test]

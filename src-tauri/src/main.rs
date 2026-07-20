@@ -4,11 +4,11 @@
 )]
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use log::{error, info, warn, LevelFilter};
+use log::{debug, error, info, warn, LevelFilter};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
@@ -167,6 +167,10 @@ struct AppState {
     pose_analyzer: Arc<PoseAnalyzer>,
     monitoring_active: Arc<Mutex<bool>>,
     force_capture_now: Arc<Mutex<bool>>,
+    force_preview_now: Arc<Mutex<bool>>,
+    backend_preview_active: Arc<Mutex<bool>>,
+    calibration_in_progress: Arc<Mutex<bool>>,
+    calibration_commit_in_progress: Arc<Mutex<bool>>,
     reminder_engine: Arc<Mutex<ReminderEngine>>,
     reminder_preferences: Arc<Mutex<ReminderPreferences>>,
     camera: Arc<Mutex<Option<Camera>>>,
@@ -286,6 +290,9 @@ async fn initialize_pose_model(
 async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *lock_or_recover(&state.monitoring_active) = true;
     *lock_or_recover(&state.force_capture_now) = true;
+    if *lock_or_recover(&state.backend_preview_active) {
+        *lock_or_recover(&state.force_preview_now) = true;
+    }
     lock_or_recover(&state.reminder_engine).reset();
 
     if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
@@ -301,7 +308,7 @@ async fn start_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<
 }
 
 fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Result<String, String> {
-    const PREVIEW_MAX_WIDTH: u32 = 1280;
+    const PREVIEW_MAX_WIDTH: u32 = 960;
     let preview = if image.width() > PREVIEW_MAX_WIDTH {
         let (_, preview_height) =
             fit_preview_dimensions(image.width(), image.height(), PREVIEW_MAX_WIDTH);
@@ -315,7 +322,7 @@ fn encode_preview_frame_data_url(image: &ImageBuffer<Rgb<u8>, Vec<u8>>) -> Resul
         image.clone()
     };
     let mut jpeg_bytes: Vec<u8> = Vec::new();
-    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 70);
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_bytes, 62);
 
     encoder
         .encode(
@@ -340,10 +347,23 @@ fn fit_preview_dimensions(width: u32, height: u32, max_width: u32) -> (u32, u32)
     (max_width, fitted_height)
 }
 
+fn effective_analysis_interval(
+    configured: Duration,
+    main_window_visible: bool,
+    battery_saving: bool,
+) -> Duration {
+    if main_window_visible && !battery_saving {
+        configured.min(Duration::from_secs(1))
+    } else {
+        configured
+    }
+}
+
 #[tauri::command]
 async fn stop_monitoring(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     *lock_or_recover(&state.monitoring_active) = false;
     *lock_or_recover(&state.force_capture_now) = false;
+    *lock_or_recover(&state.force_preview_now) = false;
     lock_or_recover(&state.reminder_engine).reset();
     stop_and_release_camera(&state, "stop_monitoring command");
 
@@ -369,15 +389,36 @@ async fn calibrate_user_posture(
     state: State<'_, AppState>,
     handle: tauri::AppHandle,
     image_data_samples: Vec<String>,
-) -> Result<(), String> {
+    reference_image_data: String,
+) -> Result<String, String> {
+    {
+        let mut calibration_commit_in_progress =
+            lock_or_recover(&state.calibration_commit_in_progress);
+        if *calibration_commit_in_progress {
+            return Err("CALIBRATION_IN_PROGRESS".to_string());
+        }
+        *calibration_commit_in_progress = true;
+    }
+    *lock_or_recover(&state.calibration_in_progress) = true;
     info!("Starting user posture calibration");
-    state
-        .pose_analyzer
-        .set_baseline_postures(&image_data_samples, &handle)
-        .map_err(|e| {
-            error!("User posture calibration failed: {}", e);
-            e.to_string()
-        })
+    let calibration_result = state.pose_analyzer.calibrate_and_save_reference(
+        &image_data_samples,
+        &reference_image_data,
+        &handle,
+    );
+    *lock_or_recover(&state.calibration_in_progress) = false;
+    *lock_or_recover(&state.calibration_commit_in_progress) = false;
+
+    match calibration_result {
+        Ok(reference_path) => {
+            *lock_or_recover(&state.force_capture_now) = true;
+            Ok(reference_path.to_string_lossy().into_owned())
+        }
+        Err(error) => {
+            error!("User posture calibration failed: {}", error);
+            Err(error.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -579,38 +620,37 @@ fn dismiss_reminder_surfaces(app: AppHandle) {
 #[tauri::command]
 fn request_preview_frame(state: State<'_, AppState>) -> Result<(), String> {
     if *lock_or_recover(&state.monitoring_active) {
-        *lock_or_recover(&state.force_capture_now) = true;
+        *lock_or_recover(&state.force_preview_now) = true;
         info!("Received immediate preview frame request");
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn save_calibrated_image(
-    handle: tauri::AppHandle,
-    image_data: String,
-) -> Result<String, String> {
-    let base64_str = image_data
-        .split(',')
-        .nth(1)
-        .ok_or_else(|| "The image payload is not valid Base64 data".to_string())?;
-    let decoded_image = STANDARD
-        .decode(base64_str)
-        .map_err(|e| format!("Failed to decode the Base64 image: {}", e))?;
+fn set_backend_preview_active(state: State<'_, AppState>, active: bool) {
+    *lock_or_recover(&state.backend_preview_active) = active;
+    if active && *lock_or_recover(&state.monitoring_active) {
+        *lock_or_recover(&state.force_preview_now) = true;
+    }
+}
+
+#[tauri::command]
+fn set_calibration_active(state: State<'_, AppState>, active: bool) {
+    *lock_or_recover(&state.calibration_in_progress) = active;
+}
+
+#[tauri::command]
+fn get_calibrated_image_path(handle: tauri::AppHandle) -> Result<Option<String>, String> {
     let app_data_path = handle
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve the app data directory: {}", e))?;
-    let image_dir = app_data_path.join("calibration_images");
-    fs::create_dir_all(&image_dir)
-        .map_err(|e| format!("Failed to create the calibration image directory: {}", e))?;
-    let file_path = image_dir.join("calibrated_pose.jpeg");
-    let mut file = fs::File::create(&file_path)
-        .map_err(|e| format!("Failed to create the calibration image file: {}", e))?;
-    file.write_all(&decoded_image)
-        .map_err(|e| format!("Failed to write the calibration image: {}", e))?;
-    info!("Calibration image overwritten: {:?}", file_path);
-    Ok(file_path.to_string_lossy().into_owned())
+    let file_path = app_data_path
+        .join("calibration_images")
+        .join("calibrated_pose.jpeg");
+    Ok(file_path
+        .exists()
+        .then(|| file_path.to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -753,20 +793,30 @@ async fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
 
 async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
     let mut last_analysis_time = Instant::now() - Duration::from_secs(3);
+    let mut last_preview_time = Instant::now() - Duration::from_millis(100);
 
     loop {
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_millis(50)).await;
 
         if !*lock_or_recover(&state.monitoring_active) {
             continue;
         }
 
-        let interval_duration = {
+        let configured_interval = {
             let secs = *lock_or_recover(&state.monitoring_interval_secs);
             Duration::from_secs(secs.max(1))
         };
+        let main_window_visible = app_handle
+            .get_webview_window("main")
+            .map(|window| {
+                window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let battery_saving = *lock_or_recover(&state.battery_saving_mode);
+        let analysis_interval =
+            effective_analysis_interval(configured_interval, main_window_visible, battery_saving);
 
-        let force_capture = {
+        let force_analysis = {
             let mut force_capture_now = lock_or_recover(&state.force_capture_now);
             let should_capture = *force_capture_now;
             if should_capture {
@@ -774,18 +824,38 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
             }
             should_capture
         };
+        let force_preview = {
+            let mut force_preview_now = lock_or_recover(&state.force_preview_now);
+            let should_capture = *force_preview_now;
+            if should_capture {
+                *force_preview_now = false;
+            }
+            should_capture
+        };
+        let backend_preview_active = *lock_or_recover(&state.backend_preview_active);
+        let preview_due = force_preview
+            || (backend_preview_active
+                && main_window_visible
+                && !battery_saving
+                && last_preview_time.elapsed() >= Duration::from_millis(100));
+        let calibration_in_progress = *lock_or_recover(&state.calibration_in_progress);
+        let analysis_due = !calibration_in_progress
+            && (force_analysis || last_analysis_time.elapsed() >= analysis_interval);
 
-        if !force_capture && last_analysis_time.elapsed() < interval_duration {
+        if !preview_due && !analysis_due {
             continue;
         }
 
-        if force_capture {
+        if force_analysis {
             info!("Executing forced immediate capture");
         }
+        if analysis_due {
+            last_analysis_time = Instant::now();
+        }
+        if preview_due {
+            last_preview_time = Instant::now();
+        }
 
-        last_analysis_time = Instant::now();
-
-        let battery_saving = *lock_or_recover(&state.battery_saving_mode);
         let selected_index = *lock_or_recover(&state.selected_camera_index);
         let buffer_option = if battery_saving {
             stop_and_release_camera(&state, "pre-capture cleanup for battery-saving mode");
@@ -891,35 +961,38 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
         };
 
         if let Some(buffer) = buffer_option {
-            info!("Battery-saving mode: starting image decode");
+            debug!("Starting camera frame decode");
             if let Ok(decoded_image) = buffer.decode_image::<RgbFormat>() {
-                info!("Battery-saving mode: image decode succeeded");
+                debug!("Camera frame decode succeeded");
                 if let Some(rgb_image) = ImageBuffer::<Rgb<u8>, _>::from_raw(
                     decoded_image.width(),
                     decoded_image.height(),
                     decoded_image.into_raw(),
                 ) {
-                    match encode_preview_frame_data_url(&rgb_image) {
-                        Ok(preview_frame_data_url) => {
-                            if let Err(e) =
-                                app_handle.emit("camera-preview-frame", &preview_frame_data_url)
-                            {
-                                error!("Failed to emit preview frame event: {}", e);
+                    if preview_due {
+                        match encode_preview_frame_data_url(&rgb_image) {
+                            Ok(preview_frame_data_url) => {
+                                if let Err(e) =
+                                    app_handle.emit("camera-preview-frame", &preview_frame_data_url)
+                                {
+                                    error!("Failed to emit preview frame event: {}", e);
+                                }
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed to generate preview frame: {}", e);
+                            Err(e) => {
+                                error!("Failed to generate preview frame: {}", e);
+                            }
                         }
                     }
 
+                    if !analysis_due {
+                        continue;
+                    }
+
                     if let Ok(result_str) = state.pose_analyzer.analyze_image_buffer(&rgb_image) {
-                        info!("Battery-saving mode: pose analysis succeeded");
+                        debug!("Pose analysis succeeded");
                         if let Ok(result_json) = serde_json::from_str::<Value>(&result_str) {
                             let _ = app_handle.emit("analysis-update", &result_json);
-                            let score = result_json
-                                .get("posture_score")
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0);
+                            let score = result_json.get("posture_score").and_then(|v| v.as_i64());
                             let is_turtle = result_json
                                 .get("turtle_neck")
                                 .and_then(|v| v.as_bool())
@@ -940,10 +1013,14 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 .get("reliable")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
+                            let baseline_ready = result_json
+                                .get("baseline_ready")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
                             info!("Pose result: reliable={}, head_offset={}, shoulder_misalignment={}", reliable, is_turtle, is_shoulder);
 
                             let preferences = lock_or_recover(&state.reminder_preferences).clone();
-                            let signal = if !reliable {
+                            let signal = if !reliable || !baseline_ready || score.is_none() {
                                 PostureSignal::Unreliable
                             } else if stable_turtle || stable_shoulder {
                                 PostureSignal::Bad
@@ -971,7 +1048,7 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                 }
                             }
 
-                            if !reliable {
+                            if !reliable || !baseline_ready {
                                 continue;
                             }
 
@@ -986,22 +1063,24 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
                                     0
                                 });
 
-                            let instances = app_handle.state::<DbInstances>();
-                            let db_map = instances.0.read().await;
+                            if let Some(score) = score {
+                                let instances = app_handle.state::<DbInstances>();
+                                let db_map = instances.0.read().await;
 
-                            if let Some(tauri_plugin_sql::DbPool::Sqlite(sqlite_pool)) =
-                                db_map.get("sqlite:posture_data.db")
-                            {
-                                let query = "INSERT INTO posture_log (score, is_turtle_neck, is_shoulder_misaligned, timestamp) VALUES (?, ?, ?, ?)";
-                                if let Err(e) = sqlx::query(query)
-                                    .bind(score)
-                                    .bind(is_turtle)
-                                    .bind(is_shoulder)
-                                    .bind(timestamp)
-                                    .execute(sqlite_pool)
-                                    .await
+                                if let Some(tauri_plugin_sql::DbPool::Sqlite(sqlite_pool)) =
+                                    db_map.get("sqlite:posture_data.db")
                                 {
-                                    error!("Database write failed: {}", e);
+                                    let query = "INSERT INTO posture_log (score, is_turtle_neck, is_shoulder_misaligned, timestamp) VALUES (?, ?, ?, ?)";
+                                    if let Err(e) = sqlx::query(query)
+                                        .bind(score)
+                                        .bind(is_turtle)
+                                        .bind(is_shoulder)
+                                        .bind(timestamp)
+                                        .execute(sqlite_pool)
+                                        .await
+                                    {
+                                        error!("Database write failed: {}", e);
+                                    }
                                 }
                             }
 
@@ -1025,6 +1104,97 @@ async fn background_monitoring_task(app_handle: AppHandle, state: AppState) {
     }
 }
 
+fn copy_file_if_missing(source: &Path, destination: &Path) -> Result<bool, String> {
+    if destination.exists() || !source.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(source, destination).map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+fn migrate_legacy_app_data(handle: &AppHandle) -> Result<(), String> {
+    let app_data_path = handle
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Failed to resolve the app data directory: {error}"))?;
+    let Some(application_support) = app_data_path.parent() else {
+        return Ok(());
+    };
+    let legacy_path = application_support.join("com.dduldduck.pose-nudge");
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(&app_data_path).map_err(|error| error.to_string())?;
+
+    let legacy_baseline = legacy_path.join("baseline.json");
+    let baseline_path = app_data_path.join("baseline.json");
+    if !baseline_path.exists() && legacy_baseline.exists() {
+        let baseline_json =
+            fs::read_to_string(&legacy_baseline).map_err(|error| error.to_string())?;
+        let baseline: Value = serde_json::from_str(&baseline_json)
+            .map_err(|error| format!("Legacy baseline is invalid: {error}"))?;
+        if !baseline.is_object() {
+            return Err("Legacy baseline is not a JSON object".to_string());
+        }
+    }
+
+    let baseline_migrated = copy_file_if_missing(&legacy_baseline, &baseline_path)?;
+    let reference_path = app_data_path
+        .join("calibration_images")
+        .join("calibrated_pose.jpeg");
+    let reference_migrated = copy_file_if_missing(
+        &legacy_path
+            .join("calibration_images")
+            .join("calibrated_pose.jpeg"),
+        &reference_path,
+    )?;
+    let database_migrated = copy_file_if_missing(
+        &legacy_path.join("posture_data.db"),
+        &app_data_path.join("posture_data.db"),
+    )?;
+
+    let legacy_settings_path = legacy_path.join(".settings.dat");
+    let settings_path = app_data_path.join(".settings.dat");
+    let mut settings = fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Value>(&contents).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(legacy_settings) = fs::read_to_string(&legacy_settings_path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Value>(&contents).ok())
+        .and_then(|value| value.as_object().cloned())
+    {
+        for (key, value) in legacy_settings {
+            settings.entry(key).or_insert(value);
+        }
+    }
+    if reference_path.exists() {
+        settings.insert(
+            "calibratedImagePath".to_string(),
+            Value::String(reference_path.to_string_lossy().into_owned()),
+        );
+    }
+    let settings_temp = settings_path.with_extension("dat.tmp");
+    fs::write(
+        &settings_temp,
+        serde_json::to_vec_pretty(&Value::Object(settings)).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::rename(&settings_temp, &settings_path).map_err(|error| error.to_string())?;
+
+    if baseline_migrated || reference_migrated || database_migrated {
+        info!(
+            "Migrated legacy Pose Nudge data (baseline={}, reference={}, database={})",
+            baseline_migrated, reference_migrated, database_migrated
+        );
+    }
+    Ok(())
+}
+
 // --- Main Application Setup ---
 
 fn main() {
@@ -1046,7 +1216,18 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_log::Builder::new().targets([Target::new(TargetKind::Stdout), Target::new(TargetKind::Webview)]).level(LevelFilter::Info).build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::Webview),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("oneposture".to_string()),
+                    }),
+                ])
+                .level(LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -1062,6 +1243,9 @@ pub fn run() {
                 }],
             ).build())
         .setup(|app| {
+            if let Err(error) = migrate_legacy_app_data(app.handle()) {
+                error!("Legacy data migration failed: {}", error);
+            }
             let quit = MenuItem::with_id(app, "quit", "Quit OnePosture", true, None::<&str>)?;
             let show = MenuItem::with_id(app, "show", "Show App", true, None::<&str>)?;
             let start_monitoring_item = MenuItem::with_id(app, "start_monitoring", "Start Monitoring", true, None::<&str>)?;
@@ -1087,6 +1271,10 @@ pub fn run() {
                 pose_analyzer: Arc::new(PoseAnalyzer::new()),
                 monitoring_active: Arc::new(Mutex::new(false)),
                 force_capture_now: Arc::new(Mutex::new(false)),
+                force_preview_now: Arc::new(Mutex::new(false)),
+                backend_preview_active: Arc::new(Mutex::new(false)),
+                calibration_in_progress: Arc::new(Mutex::new(false)),
+                calibration_commit_in_progress: Arc::new(Mutex::new(false)),
                 reminder_engine: Arc::new(Mutex::new(ReminderEngine::new())),
                 reminder_preferences: Arc::new(Mutex::new(ReminderPreferences::default())),
                 camera: Arc::new(Mutex::new(None)),
@@ -1150,6 +1338,9 @@ pub fn run() {
                             info!("'Start Monitoring' clicked");
                             *lock_or_recover(&state.monitoring_active) = true;
                             *lock_or_recover(&state.force_capture_now) = true;
+                            if *lock_or_recover(&state.backend_preview_active) {
+                                *lock_or_recover(&state.force_preview_now) = true;
+                            }
                             lock_or_recover(&state.reminder_engine).reset();
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
                                 set_tray_icon(app, tray, "monitoring_on.png");
@@ -1161,6 +1352,7 @@ pub fn run() {
                             info!("'Stop Monitoring' clicked");
                             *lock_or_recover(&state.monitoring_active) = false;
                             *lock_or_recover(&state.force_capture_now) = false;
+                            *lock_or_recover(&state.force_preview_now) = false;
                             lock_or_recover(&state.reminder_engine).reset();
                             stop_and_release_camera(&state, "tray stop_monitoring action");
                             if let Some(tray) = lock_or_recover(&state.tray).as_ref() {
@@ -1234,8 +1426,10 @@ pub fn run() {
             get_license_status,
             activate_license,
             request_preview_frame,
+            set_backend_preview_active,
+            set_calibration_active,
+            get_calibrated_image_path,
             calibrate_user_posture,
-            save_calibrated_image,
             set_detection_settings,
             get_available_cameras,
             set_selected_camera,
@@ -1253,11 +1447,28 @@ pub fn run() {
 
 #[cfg(test)]
 mod main_tests {
-    use super::fit_preview_dimensions;
+    use super::{effective_analysis_interval, fit_preview_dimensions};
+    use std::time::Duration;
 
     #[test]
     fn preview_resize_preserves_widescreen_aspect_ratio() {
-        assert_eq!(fit_preview_dimensions(1920, 1080, 1280), (1280, 720));
-        assert_eq!(fit_preview_dimensions(640, 480, 1280), (640, 480));
+        assert_eq!(fit_preview_dimensions(1920, 1080, 960), (960, 540));
+        assert_eq!(fit_preview_dimensions(640, 480, 960), (640, 480));
+    }
+
+    #[test]
+    fn visible_live_view_updates_analysis_every_second() {
+        assert_eq!(
+            effective_analysis_interval(Duration::from_secs(15), true, false),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            effective_analysis_interval(Duration::from_secs(15), false, false),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            effective_analysis_interval(Duration::from_secs(15), true, true),
+            Duration::from_secs(15)
+        );
     }
 }

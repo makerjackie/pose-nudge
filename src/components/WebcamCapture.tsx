@@ -46,6 +46,9 @@ const localizeCalibrationError = (
   }
   if (code === 'CALIBRATION_NO_SAMPLES') return t('webcam.calibrationNoSamples');
   if (code === 'CALIBRATION_NO_KEYPOINTS') return t('webcam.calibrationNoKeypoints');
+  if (code === 'CALIBRATION_FRAME_TIMEOUT') return t('webcam.calibrationFrameTimeout');
+  if (code === 'CALIBRATION_INVALID_REFERENCE') return t('webcam.calibrationInvalidReference');
+  if (code === 'CALIBRATION_IN_PROGRESS') return t('webcam.calibrationInProgress');
   return t('webcam.calibrationError', { error: errorMessage });
 };
 
@@ -61,14 +64,18 @@ const WebcamCapture = () => {
   const [error, setError] = useState<string>('');
   const [initializationProgress, setInitializationProgress] = useState<string>('');
   const [calibrationStatus, setCalibrationStatus] = useState<'idle' | 'calibrating' | 'success' | 'error'>('idle');
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [calibrationError, setCalibrationError] = useState('');
   const [calibratedImage, setCalibratedImage] = useState<string | null>(null);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
+  const [currentPlatform, setCurrentPlatform] = useState<string>('unknown');
   const [backendPreviewFrame, setBackendPreviewFrame] = useState<string | null>(null);
   const [useBackendPreview, setUseBackendPreview] = useState(false);
-  // While monitoring, show the exact frame analyzed by the Rust camera pipeline.
-  // This avoids a misleading second WebView stream with different crop/resolution.
-  const shouldUseBackendPreview = useBackendPreview || isMonitoring;
+  const [previewFps, setPreviewFps] = useState<number | null>(null);
+  const shouldUseBackendPreview = useBackendPreview || (
+    isMonitoring && currentPlatform === 'windows'
+  );
 
   const videoConstraints = useMemo(
     () => ({
@@ -111,6 +118,21 @@ const WebcamCapture = () => {
       }).catch(reject);
     });
   }, []);
+
+  useEffect(() => {
+    try {
+      setCurrentPlatform(platform());
+    } catch (platformError) {
+      console.error('Failed to resolve platform:', platformError);
+    }
+  }, []);
+
+  useEffect(() => {
+    void invoke('set_backend_preview_active', { active: shouldUseBackendPreview });
+    return () => {
+      void invoke('set_backend_preview_active', { active: false });
+    };
+  }, [shouldUseBackendPreview]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,17 +200,24 @@ const WebcamCapture = () => {
       return;
     }
     setCalibrationStatus('calibrating');
+    setCalibrationProgress(0);
+    setCalibrationError('');
     setError('');
     try {
+      await invoke('set_calibration_active', { active: true });
       const imageSamples: string[] = [];
       if (shouldUseBackendPreview && backendPreviewFrame) {
         for (let index = 0; index < 5; index += 1) {
           imageSamples.push(await captureBackendCalibrationFrame());
+          setCalibrationProgress(index + 1);
         }
       } else {
         for (let index = 0; index < 5; index += 1) {
           const frame = webcamRef.current?.getScreenshot();
-          if (frame) imageSamples.push(frame);
+          if (frame) {
+            imageSamples.push(frame);
+            setCalibrationProgress(imageSamples.length);
+          }
           if (index < 4) {
             await new Promise((resolve) => setTimeout(resolve, 220));
           }
@@ -197,9 +226,10 @@ const WebcamCapture = () => {
       if (imageSamples.length === 0) throw new Error(t('webcam.captureError'));
 
       const imageSrc = imageSamples[Math.floor(imageSamples.length / 2)];
-      
-      const filePath = await invoke<string>('save_calibrated_image', { imageData: imageSrc });
-      await invoke('calibrate_user_posture', { imageDataSamples: imageSamples });
+      const filePath = await invoke<string>('calibrate_user_posture', {
+        imageDataSamples: imageSamples,
+        referenceImageData: imageSrc,
+      });
       const imageUrl = convertFileSrc(filePath);
       const cacheBustedUrl = `${imageUrl}?t=${new Date().getTime()}`;
 
@@ -210,10 +240,14 @@ const WebcamCapture = () => {
       setCalibrationStatus('success');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(localizeCalibrationError(t, errorMessage));
+      setCalibrationError(localizeCalibrationError(t, errorMessage));
       setCalibrationStatus('error');
     } finally {
-        setTimeout(() => setCalibrationStatus('idle'), 3000);
+      void invoke('set_calibration_active', { active: false });
+      setTimeout(() => {
+        setCalibrationStatus('idle');
+        setCalibrationProgress(0);
+      }, 4000);
     }
   }, [backendPreviewFrame, captureBackendCalibrationFrame, isModelInitialized, shouldUseBackendPreview, store, t]);
 
@@ -223,7 +257,9 @@ const WebcamCapture = () => {
         const storeInstance = await load('.settings.dat');
         setStore(storeInstance);
 
-        const savedImagePath = await storeInstance.get<string>('calibratedImagePath');
+        const migratedImagePath = await invoke<string | null>('get_calibrated_image_path');
+        const savedImagePath = migratedImagePath
+          ?? await storeInstance.get<string>('calibratedImagePath');
         if (savedImagePath) {
           const imageUrl = convertFileSrc(savedImagePath);
           setCalibratedImage(`${imageUrl}?t=${new Date().getTime()}`);
@@ -298,6 +334,36 @@ const WebcamCapture = () => {
     });
   }, [backendPreviewFrame, isMonitoring, shouldUseBackendPreview]);
 
+  useEffect(() => {
+    if (!isMonitoring || shouldUseBackendPreview) {
+      setPreviewFps(null);
+      return;
+    }
+    const video = webcamRef.current?.video;
+    if (!video || typeof video.requestVideoFrameCallback !== 'function') return;
+
+    let frameCount = 0;
+    let lastReportAt = performance.now();
+    let callbackId = 0;
+    const onVideoFrame: VideoFrameRequestCallback = (now) => {
+      frameCount += 1;
+      const elapsed = now - lastReportAt;
+      if (elapsed >= 2000) {
+        const measuredFps = (frameCount * 1000) / elapsed;
+        setPreviewFps(Math.round(measuredFps));
+        console.info(`[preview-health] fps=${measuredFps.toFixed(1)}`);
+        frameCount = 0;
+        lastReportAt = now;
+      }
+      callbackId = video.requestVideoFrameCallback(onVideoFrame);
+    };
+    callbackId = video.requestVideoFrameCallback(onVideoFrame);
+    return () => {
+      video.cancelVideoFrameCallback(callbackId);
+      setPreviewFps(null);
+    };
+  }, [isMonitoring, shouldUseBackendPreview]);
+
   const onUserMedia = useCallback(() => {
     setIsWebcamReady(true);
     setUseBackendPreview(false);
@@ -343,6 +409,7 @@ const WebcamCapture = () => {
   const headDeviationPercent = Math.round((analysisResult?.head_deviation ?? 0) * 100);
   const shoulderDeviationPercent = Math.round((analysisResult?.shoulder_deviation ?? 0) * 100);
   const score = analysisResult?.posture_score ?? null;
+  const baselineReady = calibrationStatus === 'success' || analysisResult?.baseline_ready === true;
   const needsCalibration = Boolean(
     isMonitoring && analysisResult?.reliable !== false && analysisResult?.baseline_ready === false,
   );
@@ -369,7 +436,7 @@ const WebcamCapture = () => {
         <section className="camera-stage">
           <header className="camera-stage-header">
             <p><Camera />{t('webcam.cameraPreview', 'Private camera preview')}</p>
-            <span><ShieldCheck />{t('shell.localOnly', 'On-device')}</span>
+            <span><ShieldCheck />{t('shell.localOnly', 'On-device')}{previewFps ? ` · ${previewFps} FPS` : ''}</span>
           </header>
           <div className="camera-frame">
             {shouldUseBackendPreview ? (
@@ -451,13 +518,15 @@ const WebcamCapture = () => {
           </section>
 
           <section className="calibration-card">
-            <div className="card-title-row"><h2>{t('webcam.calibration')}</h2><span className={analysisResult?.baseline_ready ? 'baseline-state is-ready' : 'baseline-state'}>{analysisResult?.baseline_ready ? t('webcam.baselineReady', 'Baseline ready') : t('webcam.baselineNeeded', 'Recommended')}</span></div>
+            <div className="card-title-row"><h2>{t('webcam.calibration')}</h2><span className={baselineReady ? 'baseline-state is-ready' : 'baseline-state'}>{baselineReady ? t('webcam.baselineReady', 'Baseline ready') : t('webcam.baselineNeeded', 'Recommended')}</span></div>
             <p>{t('webcam.calibrationGuide')}</p>
             <button type="button" className="calibration-action" onClick={handleCalibrate} disabled={!isReadyForUI || calibrationStatus === 'calibrating'}>
-              {calibrationStatus === 'calibrating' ? t('webcam.saving') : t('webcam.setCurrentPosture')}
+              {calibrationStatus === 'calibrating'
+                ? t('webcam.calibrationSampling', { current: calibrationProgress, total: 5 })
+                : t('webcam.setCurrentPosture')}
             </button>
-            {calibrationStatus === 'success' && <p className="inline-progress">{t('webcam.saveSuccess')}</p>}
-            {calibrationStatus === 'error' && <p className="inline-error">{t('webcam.saveError')}</p>}
+            {calibrationStatus === 'success' && <p className="inline-progress">{t('webcam.calibrationApplied')}</p>}
+            {calibrationStatus === 'error' && <p className="inline-error">{calibrationError || t('webcam.saveError')}</p>}
             {calibratedImage && (
               <div className="calibration-reference">
                 <button type="button" onClick={() => setIsPreviewOpen(true)}><img src={calibratedImage} alt={t('webcam.calibratedThumbnail')} /></button>

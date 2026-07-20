@@ -7,6 +7,22 @@ All notable changes to **OnePosture** will be documented in this file. The origi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2026-07-20
+
+### Changed
+
+- Raised the application type scale so navigation, live status, calibration guidance, settings, and supporting copy remain readable at the default window size.
+- Restored a continuous native camera preview on macOS and Linux, while keeping a throttled backend preview fallback for Windows and camera failures.
+- Decoupled the visible preview, foreground posture analysis, and background monitoring intervals; the live view now reports its measured preview frame rate.
+
+### Fixed
+
+- Migrated the posture baseline and reference image from the original Pose Nudge bundle without overwriting existing OnePosture data.
+- Made five-frame calibration tolerate unreadable or undetected samples as long as at least three reliable frames remain.
+- Committed the calibration baseline and reference image together, preserved the previous pair on failure, and prevented monitoring history or reminders from advancing during calibration.
+- Stopped uncalibrated `null` scores from being stored as zero-valued posture history.
+- Added durable local diagnostic logs for release support.
+
 ## [2.2.2] - 2026-07-20
 
 ### Changed
