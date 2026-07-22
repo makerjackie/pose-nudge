@@ -12,13 +12,10 @@ import { isPermissionGranted } from '@tauri-apps/plugin-notification';
 import {
     BadgeCheck,
     Bell,
-    BellRing,
     CheckCircle2,
-    Gauge,
     KeyRound,
     MonitorUp,
     Moon,
-    Settings2,
     Sparkles,
     Volume2,
 } from 'lucide-react';
@@ -71,24 +68,20 @@ const LanguageSettings = () => {
     };
 
     return (
-        <section className="settings-card">
-            <header className="settings-card-header">
-                <h3>{t('settings.languageTitle')}</h3>
-            </header>
-            <div className="settings-card-content">
-                <Select value={lang} onValueChange={handleChange}>
-                    <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="ko">{t('settings.languageKorean')}</SelectItem>
-                        <SelectItem value="en">{t('settings.languageEnglish', 'English')}</SelectItem>
-                        <SelectItem value="ja">{t('settings.languageJapanese', '日本語')}</SelectItem>
-                        <SelectItem value="zh">{t('settings.languageChinese', '简体中文')}</SelectItem>
-                        <SelectItem value="zh-Hant">{t('settings.languageTraditional', '繁體中文')}</SelectItem>
-                        <SelectItem value="tr">{t('settings.languageTurkish', 'Türkçe')}</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
-        </section>
+        <div className="settings-form-row">
+            <span className="settings-row-copy"><strong>{t('settings.languageTitle')}</strong></span>
+            <Select value={lang} onValueChange={handleChange}>
+                <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="ko">{t('settings.languageKorean')}</SelectItem>
+                    <SelectItem value="en">{t('settings.languageEnglish', 'English')}</SelectItem>
+                    <SelectItem value="ja">{t('settings.languageJapanese', '日本語')}</SelectItem>
+                    <SelectItem value="zh">{t('settings.languageChinese', '简体中文')}</SelectItem>
+                    <SelectItem value="zh-Hant">{t('settings.languageTraditional', '繁體中文')}</SelectItem>
+                    <SelectItem value="tr">{t('settings.languageTurkish', 'Türkçe')}</SelectItem>
+                </SelectContent>
+            </Select>
+        </div>
     );
 };
 
@@ -156,71 +149,64 @@ const DetectionSettings = () => {
 
     return (
         <section className="settings-card">
-            <header className="settings-card-header">
-                <h3>{t('settings.detectionTitle')}</h3>
-            </header>
-            <div className="settings-card-content space-y-6">
-                <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                        <span className="font-medium">{t('settings.batterySavingMode')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.batterySavingModeDesc')}</p>
+            <div className="settings-card-content">
+                <div className="settings-list">
+                    <div className="settings-form-row">
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.batterySavingMode')}</strong>
+                            <small>{t('settings.batterySavingModeDesc')}</small>
+                        </span>
+                        <Switch checked={batterySavingMode} onCheckedChange={handleBatterySavingToggle} />
                     </div>
-                    <Switch checked={batterySavingMode} onCheckedChange={handleBatterySavingToggle} />
-                </div>
-                <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                        <span className="font-medium">{t('settings.monitoringInterval')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.monitoringIntervalDesc')}</p>
+                    <div className="settings-form-row">
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.monitoringInterval')}</strong>
+                            <small>{t('settings.monitoringIntervalDesc')}</small>
+                        </span>
+                        <Select value={monitoringInterval} onValueChange={setMonitoringInterval}>
+                            <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                {monitoringOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <Select value={monitoringInterval} onValueChange={setMonitoringInterval}>
-                        <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            {monitoringOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
-                        </SelectContent>
-                    </Select>
-                </div>
 
-                <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                        <span className="font-medium">{t('settings.notificationFrequency')}</span>
-                        <p className="text-sm text-muted-foreground">{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving') : t('settings.notificationFrequencyDescNormal')}</p>
+                    <div className="settings-form-row">
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.notificationFrequency')}</strong>
+                            <small>{batterySavingMode ? t('settings.notificationFrequencyDescBatterySaving') : t('settings.notificationFrequencyDescNormal')}</small>
+                        </span>
+                        <Select value={frequency} onValueChange={setFrequency} disabled={batterySavingMode}>
+                            <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="1">{t('settings.frequencyOnce')}</SelectItem>
+                                <SelectItem value="2">{t('settings.frequencyTwice')}</SelectItem>
+                                <SelectItem value="3">{t('settings.frequencyThrice')}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <Select value={frequency} onValueChange={setFrequency} disabled={batterySavingMode}>
-                        <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="1">{t('settings.frequencyOnce')}</SelectItem>
-                            <SelectItem value="2">{t('settings.frequencyTwice')}</SelectItem>
-                            <SelectItem value="3">{t('settings.frequencyThrice')}</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                        <span className="font-medium">{t('settings.turtleNeckSensitivity')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.turtleNeckSensitivityDesc')}</p>
+                    <div className="settings-form-row">
+                        <span className="settings-row-copy"><strong>{t('settings.turtleNeckSensitivity')}</strong></span>
+                        <Select value={turtleNeckSensitivity} onValueChange={setTurtleNeckSensitivity}>
+                            <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
+                                <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
+                                <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <Select value={turtleNeckSensitivity} onValueChange={setTurtleNeckSensitivity}>
-                        <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
-                            <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
-                            <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                        <span className="font-medium">{t('settings.shoulderSensitivity')}</span>
-                        <p className="text-sm text-muted-foreground">{t('settings.shoulderSensitivityDesc')}</p>
+                    <div className="settings-form-row">
+                        <span className="settings-row-copy"><strong>{t('settings.shoulderSensitivity')}</strong></span>
+                        <Select value={shoulderSensitivity} onValueChange={setShoulderSensitivity}>
+                            <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
+                                <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
+                                <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <Select value={shoulderSensitivity} onValueChange={setShoulderSensitivity}>
-                        <SelectTrigger className="w-[250px]"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="1">{t('settings.sensitivityLoose')}</SelectItem>
-                            <SelectItem value="2">{t('settings.sensitivityNormal')}</SelectItem>
-                            <SelectItem value="3">{t('settings.sensitivityStrict')}</SelectItem>
-                        </SelectContent>
-                    </Select>
                 </div>
             </div>
         </section>
@@ -327,16 +313,9 @@ const CameraSettings = () => {
             <header className="settings-card-header">
                 <h3>{t('settings.cameraTitle')}</h3>
             </header>
-            <div className="settings-card-content space-y-4">
-                <div className="settings-callout">
-                    <p>{t('settings.cameraGuide')}</p>
-                    <button type="button" onClick={openCameraSettings} className="settings-action is-primary mt-2">
-                        {t('settings.cameraGoTo')}
-                    </button>
-                </div>
-
-                <div className="flex items-center justify-between">
-                    <span className="font-medium">{t('settings.cameraSelect')}</span>
+            <div className="settings-card-content">
+                <div className="settings-form-row is-compact">
+                    <span className="settings-row-copy"><strong>{t('settings.cameraSelect')}</strong></span>
                     <Select value={selectedCameraIndex} onValueChange={handleCameraChange} disabled={cameras.length === 0}>
                         <SelectTrigger className="w-[250px]">
                             <SelectValue placeholder={cameras.length === 0 ? t('settings.cameraNone') : t('settings.cameraSelectPlaceholder')} />
@@ -349,6 +328,11 @@ const CameraSettings = () => {
                             ))}
                         </SelectContent>
                     </Select>
+                </div>
+                <div className="settings-card-footer">
+                    <button type="button" onClick={openCameraSettings} className="settings-action is-quiet">
+                        {t('settings.cameraGoTo')}
+                    </button>
                 </div>
             </div>
         </section>
@@ -364,6 +348,7 @@ const UpdateSettings = () => {
     const [progress, setProgress] = useState(0);
     const [updateInfo, setUpdateInfo] = useState<{ version: string; date: string } | null>(null);
     const [installed, setInstalled] = useState(false);
+    const [updateStatus, setUpdateStatus] = useState('');
 
     const checkForUpdates = async () => {
         try {
@@ -371,6 +356,7 @@ const UpdateSettings = () => {
             setProgress(0);
             setUpdateInfo(null);
             setInstalled(false);
+            setUpdateStatus('');
 
             const update = await check();
 
@@ -409,12 +395,14 @@ const UpdateSettings = () => {
                 setInstalled(true);
             } else {
                 setIsChecking(false);
+                setUpdateStatus(t('settings.upToDate'));
             }
         } catch (error) {
             console.error(t('settings.updateErrorCheck', 'Update check failed:'), error);
             setIsChecking(false);
             setIsDownloading(false);
             setIsInstalling(false);
+            setUpdateStatus(t('settings.updateFailed'));
         }
     };
 
@@ -428,58 +416,41 @@ const UpdateSettings = () => {
     };
 
     return (
-        <section className="settings-card">
-            <header className="settings-card-header">
-                <h3>{t('settings.updateTitle')}</h3>
-            </header>
-            <div className="settings-card-content space-y-4">
-                <div className="settings-callout">
-                    <p>{t('settings.updateGuide')}</p>
+        <div className="settings-form-block">
+            <div className="settings-form-row">
+                <span className="settings-row-copy">
+                    <strong>{t('settings.updateTitle')}</strong>
+                    <small>
+                        {installed
+                            ? t('settings.updateInstalled')
+                            : updateInfo
+                                ? t('settings.updateFound', { version: updateInfo.version, date: updateInfo.date })
+                                : updateStatus || t('settings.updateGuide')}
+                    </small>
+                </span>
+                {installed ? (
+                    <button type="button" onClick={handleRestart} className="settings-action is-secondary">
+                        {t('settings.restartApp')}
+                    </button>
+                ) : (
                     <button
                         type="button"
                         onClick={checkForUpdates}
                         disabled={isChecking || isDownloading || isInstalling}
-                        className="settings-action is-primary mt-2"
+                        className="settings-action is-secondary"
                     >
                         {isChecking ? t('settings.checkingUpdate') : t('settings.checkUpdate')}
                     </button>
-
-                    {updateInfo && (
-                        <p className="mt-2 text-sm">
-                            {t('settings.updateFound', { version: updateInfo.version, date: updateInfo.date })}
-                        </p>
-                    )}
-
-                    {isDownloading && (
-                        <div className="mt-4">
-                            <p className="text-sm mb-2">{t('settings.updateDownloading', { progress })}</p>
-                            <Progress value={progress} className="w-full" />
-                        </div>
-                    )}
-
-                    {isInstalling && (
-                        <p className="mt-2 text-sm">{t('settings.updateInstalling')}</p>
-                    )}
-
-                    {installed && (
-                        <div className="mt-4">
-                            <p className="text-sm text-green-700 dark:text-green-300 mb-2">
-                                {t('settings.updateInstalled')}
-                            </p>
-                            <button type="button" onClick={handleRestart} className="settings-action is-secondary">
-                                {t('settings.restartApp')}
-                            </button>
-                        </div>
-                    )}
-
-                    {!isChecking && !isDownloading && !isInstalling && !installed && !updateInfo && (
-                        <p className="mt-2 text-sm text-muted-foreground">
-                            {t('settings.upToDate')}
-                        </p>
-                    )}
-                </div>
+                )}
             </div>
-        </section>
+            {isDownloading && (
+                <div className="settings-update-progress">
+                    <span>{t('settings.updateDownloading', { progress })}</span>
+                    <Progress value={progress} className="w-full" />
+                </div>
+            )}
+            {isInstalling && <p className="settings-inline-status">{t('settings.updateInstalling')}</p>}
+        </div>
     );
 };
 
@@ -492,25 +463,33 @@ const ThemeSettings = () => {
     };
 
     return (
-        <section className="settings-card">
-            <header className="settings-card-header">
-                <h3>{t('settings.themeTitle')}</h3>
-            </header>
-            <div className="settings-card-content">
-                <Select value={theme} onValueChange={handleThemeChange}>
-                    <SelectTrigger className="w-[250px]">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
-                        <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
-                        <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
-        </section>
+        <div className="settings-form-row">
+            <span className="settings-row-copy"><strong>{t('settings.themeTitle')}</strong></span>
+            <Select value={theme} onValueChange={handleThemeChange}>
+                <SelectTrigger className="w-[250px]">
+                    <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="light">{t('settings.themeLight')}</SelectItem>
+                    <SelectItem value="dark">{t('settings.themeDark')}</SelectItem>
+                    <SelectItem value="system">{t('settings.themeSystem')}</SelectItem>
+                </SelectContent>
+            </Select>
+        </div>
     );
 };
+
+const GeneralSettings = () => (
+    <section className="settings-card">
+        <div className="settings-card-content">
+            <div className="settings-list">
+                <LanguageSettings />
+                <ThemeSettings />
+                <UpdateSettings />
+            </div>
+        </div>
+    </section>
+);
 
 const NotificationSettings = () => {
     const { t } = useTranslation();
@@ -586,53 +565,37 @@ const NotificationSettings = () => {
     };
 
     return (
-        <section className="settings-card settings-reminder-card">
-            <header className="settings-card-header">
-                <div className="flex items-start justify-between gap-4">
-                    <div>
-                        <h3>{t('settings.notificationTitle', '可靠提醒')}</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                            {t('settings.notificationSubtitle', '选择一种或多种提醒方式。悬浮提醒不会依赖系统通知横幅。')}
-                        </p>
-                    </div>
-                    <div className={`settings-permission-pill ${permission === 'granted' ? 'is-granted' : 'is-pending'}`}>
-                        {permission === 'granted'
-                            ? t('settings.notificationGranted', '系统通知已授权')
-                            : t('settings.notificationNotGranted', '系统通知未授权')}
-                    </div>
-                </div>
-            </header>
-            <div className="settings-card-content space-y-5">
-                <div className="grid gap-3 md:grid-cols-3">
-                    <label className="settings-channel-option">
-                        <Bell className="mt-0.5 h-5 w-5 text-[var(--brand)]" />
-                        <span className="min-w-0 flex-1">
-                            <span className="block font-semibold">{t('settings.channelNative', '系统通知')}</span>
-                            <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelNativeDesc', '遵循 macOS / Windows 的通知设置。')}</span>
+        <section className="settings-card">
+            <div className="settings-card-content">
+                <div className="settings-list">
+                    <label className="settings-row">
+                        <span className="settings-row-icon"><Bell /></span>
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.channelNative', '系统通知')}</strong>
+                            <small>{t('settings.channelNativeDesc', '遵循 macOS / Windows 的通知设置。')}</small>
+                        </span>
+                        <span className={`settings-permission-pill ${permission === 'granted' ? 'is-granted' : 'is-pending'}`}>
+                            {permission === 'granted'
+                                ? t('settings.notificationGranted', '系统通知已授权')
+                                : t('settings.notificationNotGranted', '系统通知未授权')}
                         </span>
                         <Switch checked={preferences.native_notification} onCheckedChange={(checked) => setChannel('native_notification', checked)} />
                     </label>
 
-                    <label className="settings-channel-option is-highlighted">
-                        <MonitorUp className="mt-0.5 h-5 w-5 text-[var(--brand)]" />
-                        <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-2 font-semibold">
-                                {t('settings.channelFloating', '顶部悬浮提醒')}
-                                <span className="settings-tier-badge">{t('settings.freeLabel', '免费')}</span>
-                            </span>
-                            <span className="mt-1 block text-xs opacity-70">{t('settings.channelFloatingDesc', '系统通知关闭时也能看见。')}</span>
+                    <label className="settings-row">
+                        <span className="settings-row-icon"><MonitorUp /></span>
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.channelFloating', '顶部悬浮提醒')}</strong>
+                            <small>{t('settings.channelFloatingDesc', '系统通知关闭时也能看见。')}</small>
                         </span>
                         <Switch checked={preferences.floating_window} onCheckedChange={(checked) => setChannel('floating_window', checked)} />
                     </label>
 
-                    <label className="settings-channel-option">
-                        <Moon className="mt-0.5 h-5 w-5 text-[var(--accent-warm)]" />
-                        <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-2 font-semibold">
-                                {t('settings.channelDim', '屏幕柔和变暗')}
-                                <span className="settings-tier-badge is-pro">{t('settings.proLabel', '进阶版')}</span>
-                            </span>
-                            <span className="mt-1 block text-xs text-muted-foreground">{t('settings.channelDimDesc', '用视觉场变化提醒，不打断输入。')}</span>
+                    <label className="settings-row">
+                        <span className="settings-row-icon"><Moon /></span>
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.channelDim', '屏幕柔和变暗')}</strong>
+                            <small>{t('settings.channelDimDesc', '用视觉场变化提醒，不打断输入。')}</small>
                         </span>
                         <Switch
                             checked={preferences.screen_dim}
@@ -640,38 +603,39 @@ const NotificationSettings = () => {
                             onCheckedChange={(checked) => setChannel('screen_dim', checked)}
                         />
                     </label>
+
+                    <label className="settings-row">
+                        <span className="settings-row-icon"><Volume2 /></span>
+                        <span className="settings-row-copy">
+                            <strong>{t('settings.channelSound', '提醒声音')}</strong>
+                            <small>{t('settings.channelSoundDesc', '仅在发送系统通知时播放。')}</small>
+                        </span>
+                        <Switch checked={preferences.sound} onCheckedChange={(checked) => setChannel('sound', checked)} />
+                    </label>
                 </div>
 
-                <div className="flex flex-col gap-4 rounded-xl border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-3">
-                        <Volume2 className="h-5 w-5 text-muted-foreground" />
-                        <div>
-                            <p className="font-medium">{t('settings.channelSound', '提醒声音')}</p>
-                            <p className="text-xs text-muted-foreground">{t('settings.channelSoundDesc', '仅在发送系统通知时播放。')}</p>
-                        </div>
-                        <Switch checked={preferences.sound} onCheckedChange={(checked) => setChannel('sound', checked)} />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
+                <div className="settings-card-footer">
+                    <div className="settings-card-actions">
                         {permission !== 'granted' && (
-                            <button type="button" onClick={requestNotificationPermission} className="settings-action is-secondary">
+                            <button type="button" onClick={requestNotificationPermission} className="settings-action is-primary">
                                 {t('settings.notificationRequest', '申请通知权限')}
                             </button>
                         )}
-                        <button type="button" onClick={sendTestReminder} className="settings-action is-primary">
+                        <button type="button" onClick={sendTestReminder} className={`settings-action ${permission === 'granted' ? 'is-primary' : 'is-secondary'}`}>
                             {t('settings.notificationTest', '发送测试提醒')}
                         </button>
                         <button type="button" onClick={openNotificationSettings} className="settings-action is-quiet">
                             {t('settings.notificationGoTo', '打开系统设置')}
                         </button>
                     </div>
-                </div>
 
-                {testStatus && (
-                    <p className="flex items-center gap-2 text-sm text-[var(--brand)]" role="status">
-                        <CheckCircle2 className="h-4 w-4" />
-                        {testStatus}
-                    </p>
-                )}
+                    {testStatus && (
+                        <p className="settings-test-status" role="status">
+                            <CheckCircle2 className="h-4 w-4" />
+                            {testStatus}
+                        </p>
+                    )}
+                </div>
             </div>
         </section>
     );
@@ -788,11 +752,7 @@ const LicenseSettings = () => {
                             {t('settings.activationGuide', '购买后，激活码会显示在 01MVP 订单页并发送到邮箱。首次激活需要联网，成功后可永久离线使用。')}
                         </p>
                     </div>
-                ) : (
-                    <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                        {t('settings.commercePreview', '这个构建未配置 01MVP 激活服务，Pro 功能暂不可购买或激活。')}
-                    </p>
-                )}
+                ) : null}
 
                 {activationStatus && <p className="text-sm text-muted-foreground" role="status">{activationStatus}</p>}
             </div>
@@ -812,20 +772,17 @@ const SettingsPage = ({ initialSection, accessLocked = false }: SettingsPageProp
     const [section, setSection] = useState<SettingsSection>(initialSection ?? 'reminders');
     const sections: Array<{
         id: SettingsSection;
-        icon: typeof BellRing;
         label: string;
-        description: string;
     }> = [
-        { id: 'reminders', icon: BellRing, label: t('settings.tabReminders', 'Reminders'), description: t('settings.tabRemindersDesc', 'How a posture nudge reaches you') },
-        { id: 'detection', icon: Gauge, label: t('settings.tabDetection', 'Detection'), description: t('settings.tabDetectionDesc', 'Camera, sensitivity and intervals') },
-        { id: 'general', icon: Settings2, label: t('settings.tabGeneral', 'General'), description: t('settings.tabGeneralDesc', 'Language, theme and updates') },
-        { id: 'pro', icon: BadgeCheck, label: 'OnePosture Pro', description: t('settings.tabProDesc', 'License and paid reminder tools') },
+        { id: 'reminders', label: t('settings.tabReminders', 'Reminders') },
+        { id: 'detection', label: t('settings.tabDetection', 'Detection') },
+        { id: 'general', label: t('settings.tabGeneral', 'General') },
+        { id: 'pro', label: 'Pro' },
     ];
     const visibleSections = accessLocked
         ? sections.filter((item) => item.id === 'pro' || item.id === 'general')
         : sections;
     const effectiveSection = visibleSections.some((item) => item.id === section) ? section : 'pro';
-    const activeSection = visibleSections.find((item) => item.id === effectiveSection) ?? visibleSections[0];
 
     useEffect(() => {
         if (accessLocked) setSection('pro');
@@ -833,40 +790,29 @@ const SettingsPage = ({ initialSection, accessLocked = false }: SettingsPageProp
 
     return (
         <section className="page-stack settings-page">
-            <header className="page-heading">
-                <div>
-                    <p className="eyebrow">{t('settings.eyebrow', 'Make OnePosture yours')}</p>
-                    <h1>{t('settings.pageTitle', 'A few choices, clearly grouped')}</h1>
-                    <p>{t('settings.pageSubtitle', 'Configure reminder coverage first, then tune detection only if your desk setup needs it.')}</p>
-                </div>
+            <header className="settings-page-heading">
+                <h1>{t('nav.settings', 'Settings')}</h1>
             </header>
 
-            <div className="settings-shell">
-                <nav className="settings-index" aria-label={t('settings.settingsNavigation', 'Settings sections')}>
-                    {visibleSections.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                            <button key={item.id} type="button" className={effectiveSection === item.id ? 'is-active' : ''} onClick={() => setSection(item.id)}>
-                                <Icon />
-                                <span><strong>{item.label}</strong><small>{item.description}</small></span>
-                            </button>
-                        );
-                    })}
-                </nav>
+            <nav className="settings-tabs" aria-label={t('settings.settingsNavigation', 'Settings sections')}>
+                {visibleSections.map((item) => (
+                    <button
+                        key={item.id}
+                        type="button"
+                        className={effectiveSection === item.id ? 'is-active' : ''}
+                        onClick={() => setSection(item.id)}
+                        aria-current={effectiveSection === item.id ? 'page' : undefined}
+                    >
+                        {item.label}
+                    </button>
+                ))}
+            </nav>
 
-                <div className="settings-content">
-                    <header className="settings-section-heading">
-                        <p className="eyebrow">{activeSection.label}</p>
-                        <h2>{activeSection.label}</h2>
-                        <p>{activeSection.description}</p>
-                    </header>
-                    <div className="settings-panels">
-                        {effectiveSection === 'reminders' && <NotificationSettings />}
-                        {effectiveSection === 'detection' && <><DetectionSettings /><CameraSettings /></>}
-                        {effectiveSection === 'general' && <><LanguageSettings /><ThemeSettings /><UpdateSettings /></>}
-                        {effectiveSection === 'pro' && <LicenseSettings />}
-                    </div>
-                </div>
+            <div className="settings-panels">
+                {effectiveSection === 'reminders' && <NotificationSettings />}
+                {effectiveSection === 'detection' && <><DetectionSettings /><CameraSettings /></>}
+                {effectiveSection === 'general' && <GeneralSettings />}
+                {effectiveSection === 'pro' && <LicenseSettings />}
             </div>
         </section>
     );
